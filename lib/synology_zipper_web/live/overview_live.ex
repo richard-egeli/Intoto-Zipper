@@ -77,6 +77,12 @@ defmodule SynologyZipperWeb.OverviewLive do
     ~H"""
     <div class="mb-5 flex items-center justify-between">
       <h2 class="text-[22px] font-semibold tracking-tight text-gray-800">Overview</h2>
+      <.link
+        navigate={~p"/sources/new"}
+        class="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-[13px] font-medium text-white shadow-sm hover:bg-blue-700"
+      >
+        + Add source
+      </.link>
     </div>
 
     <div class="mb-5 rounded-md border border-gray-200 bg-white p-6 shadow-sm">
@@ -87,6 +93,7 @@ defmodule SynologyZipperWeb.OverviewLive do
       <%= if @sources == [] do %>
         <div class="rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-gray-400">
           <p>No sources configured yet.</p>
+          <p class="mt-2"><.link navigate={~p"/sources/new"} class="text-blue-600 hover:underline">Add your first source →</.link></p>
         </div>
       <% else %>
         <table class="w-full border-separate border-spacing-0 text-left text-[13.5px]">

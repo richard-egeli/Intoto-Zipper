@@ -18,6 +18,7 @@ defmodule SynologyZipperWeb.Router do
     pipe_through :browser
 
     live "/", OverviewLive, :index
+    live "/sources/new", SourceNewLive, :new
     live "/sources/:name", SourceLive, :show
     live "/runs", RunsLive, :index
   end
