@@ -227,13 +227,13 @@ defmodule SynologyZipperWeb.SourceLive do
         id="source-form"
         phx-change="validate"
         phx-submit="save"
-        class="max-w-[580px] space-y-4"
+        class="max-w-[720px] grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4"
       >
-        <.field_text label="Name" field={f[:name]} required>
+        <.field_text class="md:col-span-2" label="Name" field={f[:name]} required>
           Renaming moves this source's month history to the new name.
         </.field_text>
 
-        <.field_text label="Path" field={f[:path]} required />
+        <.field_text class="md:col-span-2" label="Path" field={f[:path]} required />
 
         <.field_text label="Start month" field={f[:start_month]} type="month" required />
 
@@ -257,7 +257,7 @@ defmodule SynologyZipperWeb.SourceLive do
           field={f[:move_to]}
         />
 
-        <div>
+        <div class="md:col-span-2">
           <label class="inline-flex items-center gap-2 text-[13px] text-gray-800">
             <input type="hidden" name="source[auto_upload]" value="false" />
             <input
@@ -273,7 +273,7 @@ defmodule SynologyZipperWeb.SourceLive do
           <.field_errors field={f[:auto_upload]} />
         </div>
 
-        <div>
+        <div class="md:col-span-2">
           <label class="mb-1 block text-[12px] font-medium text-gray-500">Drive folder ID</label>
           <input
             type="text"
@@ -293,7 +293,7 @@ defmodule SynologyZipperWeb.SourceLive do
           <.field_errors field={f[:drive_folder_id]} />
         </div>
 
-        <div class="mt-6 flex items-center gap-2 border-t border-gray-200 pt-4">
+        <div class="md:col-span-2 mt-2 flex items-center gap-2 border-t border-gray-200 pt-4">
           <.link navigate={~p"/"} class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-[13px] text-gray-800 shadow-sm hover:bg-gray-50">
             Cancel
           </.link>

@@ -12,11 +12,12 @@ defmodule SynologyZipperWeb.Live.FormFields do
   attr :type, :string, default: "text"
   attr :required, :boolean, default: false
   attr :min, :string, default: nil
+  attr :class, :string, default: nil
   slot :inner_block
 
   def field_text(assigns) do
     ~H"""
-    <div>
+    <div class={@class}>
       <label class="mb-1 block text-[12px] font-medium text-gray-500">{@label}</label>
       <input
         type={@type}
