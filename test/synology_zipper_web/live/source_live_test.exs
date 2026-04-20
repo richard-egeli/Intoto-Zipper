@@ -108,13 +108,14 @@ defmodule SynologyZipperWeb.SourceLiveTest do
   test "auto_upload toggle enables Drive folder ID input live", %{conn: conn} do
     seed!()
     {:ok, view, html} = live(conn, "/sources/cams")
-    # On initial load the checkbox is unchecked and the Drive input is disabled.
-    assert html =~ ~s|name="source[drive_folder_id]"|
-    assert html =~ ~s|disabled|
-    assert html =~ "bg-gray-100"
 
-    # Flip auto_upload on via phx-change. drive_folder_id is still disabled in
-    # the DOM at this point so we omit it from the submitted params.
+    drive_input_re = ~r|<input[^>]*name="source\[drive_folder_id\]"[^>]*>|
+
+    # On initial load the checkbox is unchecked and the Drive input is disabled.
+    assert Regex.match?(drive_input_re, html)
+    assert Regex.match?(~r|<input[^>]*name="source\[drive_folder_id\]"[^>]*\bdisabled\b|, html)
+
+    # Flip auto_upload on via phx-change.
     html_after =
       view
       |> form("#source-form", %{
@@ -130,10 +131,9 @@ defmodule SynologyZipperWeb.SourceLiveTest do
       })
       |> render_change()
 
-    # The Drive input row should no longer have the disabled-state class.
-    refute html_after =~ "bg-gray-100"
-    # And the input element must now be enabled (no `disabled` attr on that input).
-    assert html_after =~ ~s|name="source[drive_folder_id]"|
+    # The Drive input must still render and no longer carry `disabled`.
+    assert Regex.match?(drive_input_re, html_after)
+    refute Regex.match?(~r|<input[^>]*name="source\[drive_folder_id\]"[^>]*\bdisabled\b|, html_after)
   end
 
   # Wait briefly for async PubSub re-renders.

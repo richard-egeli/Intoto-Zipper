@@ -258,38 +258,42 @@ defmodule SynologyZipperWeb.SourceLive do
         />
 
         <div class="md:col-span-2">
-          <label class="inline-flex items-center gap-2 text-[13px] text-gray-800">
-            <input type="hidden" name="source[auto_upload]" value="false" />
+          <label class="mb-1 block text-[12px] font-medium text-gray-500">Auto-upload to Drive</label>
+          <div class="flex items-stretch gap-0 rounded-md border border-gray-300 bg-white shadow-sm focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-600/10">
+            <label class={[
+              "inline-flex items-center gap-2 whitespace-nowrap border-r px-3 text-[13px] transition-colors",
+              @auto_upload_checked && "border-gray-300 bg-blue-50/60 text-blue-700",
+              !@auto_upload_checked && "border-gray-200 bg-gray-50 text-gray-500"
+            ]}>
+              <input type="hidden" name="source[auto_upload]" value="false" />
+              <input
+                type="checkbox"
+                name="source[auto_upload]"
+                id={f[:auto_upload].id}
+                value="true"
+                checked={@auto_upload_checked}
+                class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-0"
+              />
+              <span>Enabled</span>
+            </label>
             <input
-              type="checkbox"
-              name="source[auto_upload]"
-              id={f[:auto_upload].id}
-              value="true"
-              checked={@auto_upload_checked}
-              class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-0"
+              type="text"
+              name="source[drive_folder_id]"
+              id={f[:drive_folder_id].id}
+              value={f[:drive_folder_id].value || ""}
+              disabled={!@auto_upload_checked}
+              placeholder="Drive folder ID"
+              class={[
+                "h-[34px] flex-1 rounded-r-md bg-transparent px-2.5 text-[13.5px] focus:outline-none",
+                @auto_upload_checked && "text-gray-800 placeholder:text-gray-400",
+                !@auto_upload_checked && "text-gray-400 placeholder:text-gray-300"
+              ]}
             />
-            <span>auto upload</span>
-          </label>
-          <.field_errors field={f[:auto_upload]} />
-        </div>
-
-        <div class="md:col-span-2">
-          <label class="mb-1 block text-[12px] font-medium text-gray-500">Drive folder ID</label>
-          <input
-            type="text"
-            name="source[drive_folder_id]"
-            id={f[:drive_folder_id].id}
-            value={f[:drive_folder_id].value || ""}
-            disabled={!@auto_upload_checked}
-            class={[
-              "h-[34px] w-full rounded-md border px-2.5 text-[13.5px] shadow-sm focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/10",
-              @auto_upload_checked && "border-gray-300 bg-white text-gray-800",
-              !@auto_upload_checked && "border-gray-200 bg-gray-100 text-gray-400"
-            ]}
-          />
+          </div>
           <p class="mt-1 text-[12px] text-gray-400">
             Paste the folder ID from its Drive URL. Required when auto upload is on.
           </p>
+          <.field_errors field={f[:auto_upload]} />
           <.field_errors field={f[:drive_folder_id]} />
         </div>
 
