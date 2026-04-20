@@ -20,6 +20,23 @@ if System.get_env("PHX_SERVER") do
   config :synology_zipper, SynologyZipperWeb.Endpoint, server: true
 end
 
+# Scheduler tick interval is overridable in every env via SYNZ_TICK_INTERVAL_MS.
+# Default (set in config/config.exs) is 1h.
+if tick = System.get_env("SYNZ_TICK_INTERVAL_MS") do
+  config :synology_zipper, SynologyZipper.Scheduler,
+    tick_interval_ms: String.to_integer(tick),
+    initial_delay_ms: 0
+end
+
+# Uploader credentials path comes from GOOGLE_APPLICATION_CREDENTIALS at
+# process-start time (the Uploader GenServer reads it in init/1). We
+# don't translate it here; surfacing it in config/runtime.exs only so
+# it's documented in one place.
+#
+# To disable the uploader entirely without unsetting the env var, leave
+# it pointing at a non-existent path — the Uploader falls back to
+# {:disabled, reason} and the UI shows the banner.
+
 if config_env() == :prod do
   database_path =
     System.get_env("DATABASE_PATH") ||

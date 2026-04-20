@@ -7,24 +7,50 @@ defmodule SynologyZipper.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      SynologyZipperWeb.Telemetry,
-      SynologyZipper.Repo,
-      {Ecto.Migrator,
-        repos: Application.fetch_env!(:synology_zipper, :ecto_repos),
-        skip: skip_migrations?()},
-      {DNSCluster, query: Application.get_env(:synology_zipper, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: SynologyZipper.PubSub},
-      # Start a worker by calling: SynologyZipper.Worker.start_link(arg)
-      # {SynologyZipper.Worker, arg},
-      # Start to serve requests, typically the last entry
-      SynologyZipperWeb.Endpoint
-    ]
+    children =
+      [
+        SynologyZipperWeb.Telemetry,
+        SynologyZipper.Repo,
+        {Ecto.Migrator,
+         repos: Application.fetch_env!(:synology_zipper, :ecto_repos),
+         skip: skip_migrations?()},
+        {DNSCluster, query: Application.get_env(:synology_zipper, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: SynologyZipper.PubSub},
+        SynologyZipperWeb.Endpoint
+      ] ++ background_workers()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: SynologyZipper.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  # Uploader + Scheduler are the two long-running singletons that make up
+  # the backend. They're opt-in via application env so tests that want
+  # isolated control (or that don't need them at all) can omit them with:
+  #
+  #     config :synology_zipper, :background_workers, false
+  #
+  # The integration test flips this on explicitly, with an in-test
+  # Scheduler override that sets `tick_interval_ms` to a huge value so
+  # nothing auto-ticks while tests are running.
+  defp background_workers do
+    if Application.get_env(:synology_zipper, :background_workers, true) do
+      [
+        {SynologyZipper.Uploader, uploader_opts()},
+        {SynologyZipper.Scheduler, scheduler_opts()}
+      ]
+    else
+      []
+    end
+  end
+
+  defp uploader_opts do
+    Application.get_env(:synology_zipper, SynologyZipper.Uploader, [])
+  end
+
+  defp scheduler_opts do
+    Application.get_env(:synology_zipper, SynologyZipper.Scheduler, [])
   end
 
   # Tell Phoenix to update the endpoint configuration

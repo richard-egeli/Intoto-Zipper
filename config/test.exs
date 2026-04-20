@@ -20,6 +20,10 @@ config :synology_zipper, SynologyZipperWeb.Endpoint,
 # Print only warnings and errors during test
 config :logger, level: :warning
 
+# Keep metadata visible in test log output so the integration test
+# surfaces zipper reasons, etc.
+config :logger, :console, metadata: :all
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 
@@ -30,3 +34,9 @@ config :phoenix_live_view,
 # Every Tesla client in tests (including google_api_drive's) routes
 # through Tesla.Mock so that no real HTTP ever happens.
 config :tesla, adapter: Tesla.Mock
+
+# Don't auto-start the Uploader + Scheduler during `mix test`. Most
+# tests use `DataCase` which uses the SQL sandbox; the background
+# Scheduler would fight for its own checkout. The integration test
+# starts its own supervised instances explicitly.
+config :synology_zipper, :background_workers, false

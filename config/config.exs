@@ -11,6 +11,17 @@ config :synology_zipper,
   ecto_repos: [SynologyZipper.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# Start the Uploader + Scheduler by default. Tests override this to
+# false in config/test.exs so each test boots its own isolated
+# instances (or none at all).
+config :synology_zipper, :background_workers, true
+
+# Scheduler default — 1 hour tick in prod; dev / prod overrides live in
+# their respective config files or in config/runtime.exs.
+config :synology_zipper, SynologyZipper.Scheduler,
+  tick_interval_ms: 60 * 60 * 1000,
+  initial_delay_ms: 0
+
 # Configures the endpoint
 config :synology_zipper, SynologyZipperWeb.Endpoint,
   url: [host: "localhost"],
