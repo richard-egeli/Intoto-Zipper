@@ -21,7 +21,15 @@ defmodule SynologyZipper.UploaderTest do
   defp start_uploader!(opts) do
     name = :"uploader_#{System.unique_integer([:positive])}"
     {:ok, pid} = Uploader.start_link(Keyword.put(opts, :name, name))
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    on_exit(fn ->
+      try do
+        if Process.alive?(pid), do: GenServer.stop(pid)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
     name
   end
 
