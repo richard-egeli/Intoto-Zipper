@@ -1,32 +1,64 @@
-<header class="px-4 sm:px-6 lg:px-8">
-  <div class="flex items-center justify-between border-b border-zinc-100 py-3 text-sm">
-    <div class="flex items-center gap-4">
-      <a href="/">
-        <img src={~p"/images/logo.svg"} width="36" />
-      </a>
-      <p class="bg-brand/5 text-brand rounded-full px-2 font-medium leading-6">
-        v{Application.spec(:phoenix, :vsn)}
-      </p>
+<header class="sticky top-0 z-10 border-b border-gray-200 bg-white">
+  <div class="mx-auto flex h-[52px] max-w-6xl items-center gap-6 px-6">
+    <div class="text-[15px] font-semibold tracking-tight text-gray-800">
+      <.link navigate={~p"/"} class="text-gray-800 hover:no-underline">
+        synology-zipper
+      </.link>
     </div>
-    <div class="flex items-center gap-4 font-semibold leading-6 text-zinc-900">
-      <a href="https://twitter.com/elixirphoenix" class="hover:text-zinc-700">
-        @elixirphoenix
-      </a>
-      <a href="https://github.com/phoenixframework/phoenix" class="hover:text-zinc-700">
-        GitHub
-      </a>
-      <a
-        href="https://hexdocs.pm/phoenix/overview.html"
-        class="rounded-lg bg-zinc-100 px-2 py-1 hover:bg-zinc-200/80"
+    <nav class="flex flex-1 items-center gap-1">
+      <.link
+        navigate={~p"/"}
+        class={[
+          "rounded-md px-3 py-1.5 text-[13.5px] font-medium",
+          @active_nav == "overview" && "bg-indigo-50 text-blue-600",
+          @active_nav != "overview" && "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+        ]}
       >
-        Get Started <span aria-hidden="true">&rarr;</span>
-      </a>
+        Overview
+      </.link>
+      <.link
+        navigate={~p"/runs"}
+        class={[
+          "rounded-md px-3 py-1.5 text-[13.5px] font-medium",
+          @active_nav == "runs" && "bg-indigo-50 text-blue-600",
+          @active_nav != "runs" && "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+        ]}
+      >
+        Runs
+      </.link>
+    </nav>
+    <div class="flex items-center gap-3">
+      <span
+        id="run-status"
+        class={[
+          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs",
+          @running && "border-amber-200 bg-amber-50 text-amber-700",
+          !@running && "border-gray-200 bg-gray-50 text-gray-500"
+        ]}
+      >
+        <span class={[
+          "inline-block h-1.5 w-1.5 rounded-full",
+          @running && "animate-pulse bg-amber-600",
+          !@running && "bg-gray-400"
+        ]} />
+        {if @running, do: "running", else: "idle"}
+      </span>
+      <button
+        type="button"
+        phx-click="run_now"
+        class="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-[13px] font-medium text-white shadow-sm hover:bg-blue-700"
+      >
+        Run now
+      </button>
     </div>
   </div>
 </header>
-<main class="px-4 py-20 sm:px-6 lg:px-8">
-  <div class="mx-auto max-w-2xl">
-    <.flash_group flash={@flash} />
-    {@inner_content}
+<main class="mx-auto max-w-6xl px-6 pb-12 pt-7">
+  <div
+    :if={@banner_warning}
+    class="mb-4 rounded-md border border-amber-200 bg-amber-100 px-4 py-2.5 text-[13.5px] text-amber-900"
+  >
+    {@banner_warning}
   </div>
+  {@inner_content}
 </main>

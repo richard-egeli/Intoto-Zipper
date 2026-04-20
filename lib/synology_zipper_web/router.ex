@@ -17,13 +17,10 @@ defmodule SynologyZipperWeb.Router do
   scope "/", SynologyZipperWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", OverviewLive, :index
+    live "/sources/:name", SourceLive, :show
+    live "/runs", RunsLive, :index
   end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", SynologyZipperWeb do
-  #   pipe_through :api
-  # end
 
   # Enable LiveDashboard in development
   if Application.compile_env(:synology_zipper, :dev_routes) do
