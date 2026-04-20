@@ -159,11 +159,7 @@ defmodule SynologyZipperWeb.SourceNewLive do
         <div class="md:col-span-2">
           <label class="mb-1 block text-[12px] font-medium text-gray-500">Auto-upload to Drive</label>
           <div class="flex items-stretch gap-0 rounded-md border border-gray-300 bg-white shadow-sm focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-600/10">
-            <label class={[
-              "inline-flex items-center gap-2 whitespace-nowrap border-r px-3 text-[13px] transition-colors",
-              @auto_upload_checked && "border-gray-300 bg-blue-50/60 text-blue-700",
-              !@auto_upload_checked && "border-gray-200 bg-gray-50 text-gray-500"
-            ]}>
+            <label class="inline-flex items-center gap-2 whitespace-nowrap border-r border-gray-300 bg-gray-50 px-3 text-[13px] text-gray-700">
               <input type="hidden" name="source[auto_upload]" value="false" />
               <input
                 type="checkbox"
