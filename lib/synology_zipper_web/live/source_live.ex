@@ -227,7 +227,7 @@ defmodule SynologyZipperWeb.SourceLive do
         id="source-form"
         phx-change="validate"
         phx-submit="save"
-        class="max-w-[720px] grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4"
+        class="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4"
       >
         <.field_text class="md:col-span-2" label="Name" field={f[:name]} required>
           Renaming moves this source's month history to the new name.
