@@ -46,8 +46,8 @@ defmodule SynologyZipperWeb.RunsLive do
         No runs recorded yet.
       </div>
     <% else %>
-      <div class="overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
-        <table class="w-full border-separate border-spacing-0 text-left text-[13.5px]">
+      <div class="overflow-x-auto rounded-md border border-gray-200 bg-white shadow-sm">
+        <table class="w-full min-w-[520px] border-separate border-spacing-0 text-left text-[13.5px]">
           <thead>
             <tr class="bg-gray-50 text-[11.5px] uppercase tracking-wider text-gray-500">
               <th class="border-b border-gray-200 px-4 py-2.5 text-right font-medium">ID</th>

@@ -319,7 +319,8 @@ defmodule SynologyZipperWeb.SourceLive do
           No recorded months yet for this source.
         </div>
       <% else %>
-        <table class="w-full border-separate border-spacing-0 text-left text-[13.5px]">
+        <div class="-mx-6 overflow-x-auto px-6">
+        <table class="w-full min-w-[960px] border-separate border-spacing-0 text-left text-[13.5px]">
           <thead>
             <tr class="bg-gray-50 text-[11.5px] uppercase tracking-wider text-gray-500">
               <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 font-medium">Month</th>
@@ -379,6 +380,7 @@ defmodule SynologyZipperWeb.SourceLive do
             </tr>
           </tbody>
         </table>
+        </div>
       <% end %>
     </div>
 

@@ -96,7 +96,8 @@ defmodule SynologyZipperWeb.OverviewLive do
           <p class="mt-2"><.link navigate={~p"/sources/new"} class="text-blue-600 hover:underline">Add your first source →</.link></p>
         </div>
       <% else %>
-        <table class="w-full border-separate border-spacing-0 text-left text-[13.5px]">
+        <div class="-mx-6 overflow-x-auto px-6">
+        <table class="w-full min-w-[860px] border-separate border-spacing-0 text-left text-[13.5px]">
           <thead>
             <tr class="bg-gray-50 text-[11.5px] uppercase tracking-wider text-gray-500">
               <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 font-medium">Name</th>
@@ -132,7 +133,7 @@ defmodule SynologyZipperWeb.OverviewLive do
                   {src.name}
                 </.link>
               </td>
-              <td class="break-all border-b border-gray-100 px-4 py-2.5 font-mono text-[12.5px] text-gray-500">
+              <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 font-mono text-[12.5px] text-gray-500">
                 {src.path}
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 font-mono text-[12.5px] text-gray-500">
@@ -164,6 +165,7 @@ defmodule SynologyZipperWeb.OverviewLive do
             </tr>
           </tbody>
         </table>
+        </div>
       <% end %>
     </div>
 
@@ -180,7 +182,8 @@ defmodule SynologyZipperWeb.OverviewLive do
           No runs recorded yet.
         </div>
       <% else %>
-        <table class="w-full border-separate border-spacing-0 text-left text-[13.5px]">
+        <div class="-mx-6 overflow-x-auto px-6">
+        <table class="w-full min-w-[520px] border-separate border-spacing-0 text-left text-[13.5px]">
           <thead>
             <tr class="bg-gray-50 text-[11.5px] uppercase tracking-wider text-gray-500">
               <th class="border-b border-gray-200 px-4 py-2.5 text-right font-medium">ID</th>
@@ -210,6 +213,7 @@ defmodule SynologyZipperWeb.OverviewLive do
             </tr>
           </tbody>
         </table>
+        </div>
       <% end %>
     </div>
     """
