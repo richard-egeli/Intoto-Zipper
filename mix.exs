@@ -54,7 +54,16 @@ defmodule SynologyZipper.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.1.1"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      # Google Drive v3 SDK (Tesla-based).
+      {:google_api_drive, "~> 0.32"},
+      # Service-account token fetcher for :google_api_drive.
+      {:goth, "~> 1.4"},
+      # Swap Tesla's default Hackney adapter for Finch to match the rest of
+      # the Phoenix HTTP stack (keeps deps lean).
+      {:finch, "~> 0.18"},
+      # Test-only: Tesla.Mock for stubbing google_api_drive HTTP calls.
+      {:mox, "~> 1.1", only: :test}
     ]
   end
 

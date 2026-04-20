@@ -26,3 +26,7 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
+
+# Every Tesla client in tests (including google_api_drive's) routes
+# through Tesla.Mock so that no real HTTP ever happens.
+config :tesla, adapter: Tesla.Mock
