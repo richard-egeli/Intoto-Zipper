@@ -48,8 +48,6 @@ defmodule SynologyZipperWeb.SourceLiveTest do
                  "path" => "/mnt/cams",
                  "start_month" => "2026-02",
                  "grace_days" => "5",
-                 "post_zip" => "keep",
-                 "move_to" => "",
                  "auto_upload" => "false"
                }
              })
@@ -124,8 +122,6 @@ defmodule SynologyZipperWeb.SourceLiveTest do
           "path" => "/mnt/cams",
           "start_month" => "2026-01",
           "grace_days" => "3",
-          "post_zip" => "keep",
-          "move_to" => "",
           "auto_upload" => "true"
         }
       })

@@ -131,31 +131,6 @@ defmodule SynologyZipperWeb.SourceNewLive do
           Days to wait after a month ends before zipping it. Useful if uploads can land late.
         </.field_text>
 
-        <div>
-          <label class="mb-1 block text-[12px] font-medium text-gray-500">Post-zip action</label>
-          <select
-            name="source[post_zip]"
-            id={f[:post_zip].id}
-            class="h-[34px] w-full rounded-md border border-gray-300 bg-white px-2.5 text-[13.5px] text-gray-800 shadow-sm focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/10"
-          >
-            <option value="keep" selected={f[:post_zip].value in [nil, "", "keep"]}>
-              keep — leave the date folders alone
-            </option>
-            <option value="move" selected={f[:post_zip].value == "move"}>
-              move — relocate them after zipping
-            </option>
-          </select>
-          <p class="mt-1 text-[12px] text-gray-400">
-            This tool will never delete source folders.
-          </p>
-          <.field_errors field={f[:post_zip]} />
-        </div>
-
-        <.field_text
-          label="Move-to (required if post-zip = move)"
-          field={f[:move_to]}
-        />
-
         <div class="md:col-span-2">
           <label class="mb-1 block text-[12px] font-medium text-gray-500">Auto-upload to Drive</label>
           <div class="flex items-stretch gap-0 rounded-md border border-gray-300 bg-white shadow-sm focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-600/10">
