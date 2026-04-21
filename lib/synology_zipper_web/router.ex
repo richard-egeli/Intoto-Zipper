@@ -27,6 +27,18 @@ defmodule SynologyZipperWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # Minimal pipeline for /healthz — no session, no CSRF, no LiveView.
+  # Must stay this light so it can answer under heavy load.
+  pipeline :health do
+    plug :accepts, ["text", "html"]
+  end
+
+  scope "/", SynologyZipperWeb do
+    pipe_through :health
+
+    get "/healthz", HealthController, :ok
+  end
+
   scope "/", SynologyZipperWeb do
     pipe_through :browser
 

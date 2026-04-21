@@ -63,10 +63,13 @@ services:
       - no-new-privileges:true
 
     healthcheck:
-      # Hits the overview page. Fails while the BEAM is still booting
-      # so `docker compose up --wait` actually blocks on readiness.
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:4000/ || exit 1"]
+      # /healthz is a no-DB, no-LiveView, no-session, no-CSRF endpoint
+      # that returns 200 "ok" as cheaply as possible. Generous
+      # timeout + retries so the Synology can ride out heavy disk +
+      # upload saturation without the container being marked
+      # unhealthy (and possibly restarted) mid-upload.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:4000/healthz || exit 1"]
       interval: 30s
-      timeout: 5s
+      timeout: 15s
       start_period: 30s
-      retries: 3
+      retries: 5
