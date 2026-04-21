@@ -382,12 +382,18 @@ defmodule SynologyZipper.Runner do
       drive_folder_id: candidate.drive_folder_id
     }
 
+    broadcast_upload_event(:upload_started, candidate.source_name, candidate.month)
+
     result =
-      Retry.run(
-        fn -> do_upload(uploader, job) end,
-        %{attempts: 3, base: 2_000},
-        &Drive.transient?/1
-      )
+      try do
+        Retry.run(
+          fn -> do_upload(uploader, job) end,
+          %{attempts: 3, base: 2_000},
+          &Drive.transient?/1
+        )
+      after
+        broadcast_upload_event(:upload_finished, candidate.source_name, candidate.month)
+      end
 
     case result do
       {:ok, %{drive_file_id: file_id}} ->
@@ -419,6 +425,17 @@ defmodule SynologyZipper.Runner do
   defp do_upload(Uploader, job), do: Uploader.upload(job)
   defp do_upload(mod, job) when is_atom(mod), do: apply(mod, :upload, [job])
   defp do_upload({mod, name}, job), do: apply(mod, :upload, [name, job])
+
+  # Fires on the per-source PubSub topic so SourceLive can flip each
+  # row's upload cell to an "uploading…" badge while the Task is
+  # actually talking to Drive (as opposed to just queued).
+  defp broadcast_upload_event(event, source_name, month) do
+    Phoenix.PubSub.broadcast(
+      SynologyZipper.PubSub,
+      State.source_topic(source_name),
+      {event, source_name, month}
+    )
+  end
 
   defp reason_string(r) when is_binary(r), do: r
   defp reason_string(r), do: inspect(r)

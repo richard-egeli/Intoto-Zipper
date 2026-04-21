@@ -49,6 +49,7 @@ defmodule SynologyZipperWeb.SourceLive do
          |> assign_form(source)
          |> assign(:auto_upload_checked, source.auto_upload)
          |> assign(:progress, %{})
+         |> assign(:uploading, MapSet.new())
          |> assign(:months, State.list_months(name))}
     end
   end
@@ -165,11 +166,22 @@ defmodule SynologyZipperWeb.SourceLive do
     {:noreply, assign(socket, :progress, Map.put(socket.assigns.progress, month, bytes))}
   end
 
+  def handle_info({:upload_started, name, month}, %{assigns: %{original_name: name}} = socket) do
+    {:noreply, assign(socket, :uploading, MapSet.put(socket.assigns.uploading, month))}
+  end
+
+  def handle_info({:upload_finished, name, month}, %{assigns: %{original_name: name}} = socket) do
+    {:noreply, assign(socket, :uploading, MapSet.delete(socket.assigns.uploading, month))}
+  end
+
   # Runner cleared the progress map when the run ended, but we also
   # drop it defensively on run_end so the UI doesn't leave a stale
   # progress value for a month that finished without a final broadcast.
   def handle_info({:run_end, _id, _status}, socket) do
-    {:noreply, assign(socket, :progress, %{})}
+    {:noreply,
+     socket
+     |> assign(:progress, %{})
+     |> assign(:uploading, MapSet.new())}
   end
 
   # {:run_*, ...} handled by the shared hook.
@@ -375,7 +387,7 @@ defmodule SynologyZipperWeb.SourceLive do
                 {m.error}
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5">
-                <.upload_cell month={m} />
+                <.upload_cell month={m} uploading={MapSet.member?(@uploading, m.month)} />
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 text-right">
                 <button
@@ -455,6 +467,19 @@ defmodule SynologyZipperWeb.SourceLive do
   defp display_status(%{status: s}, _), do: s
 
   attr :month, :map, required: true
+  attr :uploading, :boolean, default: false
+
+  defp upload_cell(%{uploading: true} = assigns) do
+    ~H"""
+    <span
+      title="uploading to Drive"
+      class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11.5px] font-medium text-amber-700"
+    >
+      <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-600" />
+      uploading…
+    </span>
+    """
+  end
 
   defp upload_cell(%{month: m} = assigns) do
     cond do
