@@ -46,10 +46,14 @@ services:
 
       # Synology source folders, mounted 1:1 so the paths you see in
       # File Station match what the app uses (no need to rewrite any
-      # source configs in the UI). Read-only — the app only reads.
-      # Add more entries when you point a new source at a different
-      # share.
-      - /volume1/Smartdam:/volume1/Smartdam:ro
+      # source configs in the UI).
+      #
+      # Note: NOT read-only. The zipper writes the monthly `.zip`
+      # artefact at the top of each source folder (e.g.
+      # `/volume1/Smartdam/.../2025-10.zip`), then never touches it
+      # again. Files inside the `YY-MM-DD` / `YYYY-MM-DD` date
+      # subdirectories are never modified.
+      - /volume1/Smartdam:/volume1/Smartdam
 
     # Minimal container capabilities — this app only reads files and
     # talks HTTPS out to googleapis.com.
