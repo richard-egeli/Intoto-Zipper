@@ -44,9 +44,12 @@ services:
       # matter.
       - ${DATA_DIR:-./data}:/data
 
-      # Synology source folders. Read-only — the app only reads them.
-      # Add more entries as you wire up new sources from the UI.
-      # - /volume1/CAMS:/srv/cams:ro
+      # Synology source folders, mounted 1:1 so the paths you see in
+      # File Station match what the app uses (no need to rewrite any
+      # source configs in the UI). Read-only — the app only reads.
+      # Add more entries when you point a new source at a different
+      # share.
+      - /volume1/Smartdam:/volume1/Smartdam:ro
 
     # Minimal container capabilities — this app only reads files and
     # talks HTTPS out to googleapis.com.
