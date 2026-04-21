@@ -39,3 +39,11 @@ npm-debug.log
 *.db
 *.db-*
 
+# Secrets — .env is for real values, .env.example is the committed template.
+.env
+.env.*
+!.env.example
+/secrets/
+/data/
+/dist/
+

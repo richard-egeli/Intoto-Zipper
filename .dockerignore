@@ -1,0 +1,43 @@
+# This file excludes paths from the Docker build context. Files listed
+# here aren't sent to the Docker daemon at all.
+
+.dockerignore
+
+# Git — keep HEAD/refs so the image build can embed a commit hash.
+.git
+!.git/HEAD
+!.git/refs
+
+# Development / test noise
+/cover/
+/doc/
+/test/
+/tmp/
+.elixir_ls
+.claude/
+.DS_Store
+
+# Mix artifacts — built inside the image
+/_build/
+/deps/
+*.ez
+
+# Local SQLite DBs + crash dumps must never ship in the image
+*.db
+*.db-*
+erl_crash.dump
+
+# Secrets — the app reads them from env / mounted files at runtime
+.env
+.env.*
+!.env.example
+secrets/
+
+# Pre-compiled assets — the builder stage runs tailwind + esbuild itself
+/assets/node_modules/
+/priv/static/assets/
+/priv/static/cache_manifest.json
+
+# Docs aren't needed for the build
+README.md
+/docs/

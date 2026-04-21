@@ -1,0 +1,65 @@
+# Local-network Synology deployment. Single service, SQLite file on a
+# bind mount, Drive credentials mounted read-only as a file, source
+# folders mounted read-only.
+#
+# Copy `.env.example` → `.env` and fill in SECRET_KEY_BASE before the
+# first `docker compose up`.
+
+services:
+  zipper:
+    build:
+      context: .
+      args:
+        # Match the UID/GID of the host user that owns /volume1/CAMS
+        # etc. so the container can read the mounted folders without
+        # chown gymnastics.
+        APP_UID: "${APP_UID:-1000}"
+        APP_GID: "${APP_GID:-1000}"
+    # Default tag is the locally-built one. On the NAS, set SYNZ_IMAGE
+    # in .env to a registry ref (e.g. ghcr.io/you/synology_zipper:latest)
+    # and `docker compose pull` + `docker compose up -d` instead of
+    # building — no local build compute needed.
+    image: ${SYNZ_IMAGE:-synology_zipper:latest}
+    container_name: synology_zipper
+    restart: unless-stopped
+
+    # Env vars are injected into the container environment by compose;
+    # config/runtime.exs reads them via System.get_env/1.
+    env_file:
+      - .env
+
+    ports:
+      - "${HOST_PORT:-4000}:4000"
+
+    volumes:
+      # Bind mounts are resolved by the Docker *daemon*. Locally that's
+      # the Mac, but when using a remote context (the `make nas-*`
+      # targets) that's the NAS — so relative paths like `./data` land
+      # in the SSH user's home dir over there. Override with absolute
+      # paths via .env or the `NAS_*_DIR` Makefile vars when deploying.
+
+      # SQLite DB — survives container rebuilds.
+      - ${DATA_DIR:-./data}:/data
+
+      # Service-account JSON mounted as a single read-only file.
+      - ${SECRETS_DIR:-./secrets}/drive.json:/run/secrets/drive.json:ro
+
+      # Synology source folders. Read-only — the app only reads them.
+      # Add more entries as you wire up new sources from the UI.
+      # - /volume1/CAMS:/srv/cams:ro
+
+    # Minimal container capabilities — this app only reads files and
+    # talks HTTPS out to googleapis.com.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      # Hits the overview page. Fails while the BEAM is still booting
+      # so `docker compose up --wait` actually blocks on readiness.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:4000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
