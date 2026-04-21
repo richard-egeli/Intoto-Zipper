@@ -7,6 +7,13 @@ defmodule SynologyZipper.Runner do
 
   Behaviour:
 
+    * Zip and upload run concurrently: as soon as a month finishes
+      zipping, an async Task is fired to upload it. The zip phase
+      keeps moving to the next month immediately; at end of the zip
+      phase we await any outstanding upload tasks. The Uploader
+      GenServer still serialises actual Drive traffic so this
+      doesn't fan out API calls — it only overlaps disk-I/O with
+      network-I/O, which are disjoint bottlenecks.
     * Upload failures do NOT bump the run's `months_failed` counter;
       they are recorded per-month in `upload_error` / `upload_attempts`.
     * On process death mid-zip, the month row is already in
@@ -25,8 +32,16 @@ defmodule SynologyZipper.Runner do
           months_zipped: non_neg_integer(),
           months_failed: non_neg_integer(),
           exit_status: String.t(),
-          notes: String.t()
+          notes: String.t(),
+          upload_tasks: [Task.t()]
         }
+
+  # Per-task upload timeout. Long because uploads are serialised
+  # through the Uploader GenServer — N queued tasks share the same
+  # Drive API pipe. 4h is way more than any realistic real-world zip
+  # should take, and we'd rather await-then-log than force-kill a
+  # legitimate in-flight upload.
+  @upload_await_timeout_ms :timer.hours(4)
 
   @doc """
   Entrypoint used by the scheduler and by integration tests.
@@ -47,14 +62,37 @@ defmodule SynologyZipper.Runner do
     Logger.info("run start", run_id: run.id)
     Phoenix.PubSub.broadcast(SynologyZipper.PubSub, "runs", {:run_start, run.id})
 
-    initial = %{run_id: run.id, months_zipped: 0, months_failed: 0, exit_status: "", notes: ""}
+    initial = %{
+      run_id: run.id,
+      months_zipped: 0,
+      months_failed: 0,
+      exit_status: "",
+      notes: "",
+      upload_tasks: [],
+      # `{source_name, month}` tuples we already fired async uploads
+      # for in this tick. The safety-net upload phase filters these
+      # out so we don't attempt a second upload on the same row and
+      # double-count `upload_attempts`.
+      attempted: MapSet.new()
+    }
 
+    # Zip phase. Each successful non-empty zip fires an async upload
+    # task that piles into `acc.upload_tasks`.
     result =
       State.list_sources()
       |> Enum.reduce(initial, fn source, acc ->
         process_source(source, Keyword.merge(opts, uploader: uploader), now, acc)
       end)
 
+    # Wait for the uploads we started during the zip phase. They
+    # were collected in reverse-zipped order; reverse for log order.
+    await_uploads(Enum.reverse(result.upload_tasks))
+    result = %{result | upload_tasks: []}
+
+    # Safety net: picks up any zipped-but-not-yet-uploaded months
+    # from a *prior* tick that was interrupted. Skips months already
+    # attempted by the async phase in this tick. In steady state this
+    # finds zero candidates.
     result = run_upload_phase(result, uploader)
 
     exit_status =
@@ -103,7 +141,7 @@ defmodule SynologyZipper.Runner do
     end)
   end
 
-  defp process_month(source, month, _opts, acc) do
+  defp process_month(source, month, opts, acc) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     {:ok, _} = State.start_month_attempt(source.name, month, now)
 
@@ -144,8 +182,91 @@ defmodule SynologyZipper.Runner do
           skipped: skipped
         )
 
-        %{acc | months_zipped: acc.months_zipped + 1}
+        acc
+        |> Map.update!(:months_zipped, &(&1 + 1))
+        |> maybe_queue_upload(source, month, path, opts)
     end
+  end
+
+  # Fires an async upload task when the source has auto-upload on and
+  # a Drive folder id set. The task body wraps upload_one/2 so a
+  # single task failure never crashes the Runner reducer; mark_* is
+  # called from inside the task for state updates.
+  defp maybe_queue_upload(
+         acc,
+         %{auto_upload: true, drive_folder_id: folder_id} = source,
+         month,
+         zip_path,
+         opts
+       )
+       when is_binary(folder_id) and folder_id != "" and is_binary(zip_path) do
+    uploader = Keyword.fetch!(opts, :uploader)
+
+    candidate = %{
+      source_name: source.name,
+      month: month,
+      zip_path: zip_path,
+      drive_folder_id: folder_id
+    }
+
+    task = Task.async(fn -> run_async_upload(candidate, uploader) end)
+
+    %{
+      acc
+      | upload_tasks: [task | acc.upload_tasks],
+        attempted: MapSet.put(acc.attempted, {source.name, month})
+    }
+  end
+
+  defp maybe_queue_upload(acc, _source, _month, _zip_path, _opts), do: acc
+
+  # Body of an async upload task. Mirrors the synchronous upload_one
+  # path and also handles the "uploader disabled" case so we mark the
+  # month's upload_error immediately instead of silently skipping.
+  defp run_async_upload(candidate, uploader) do
+    if uploader_disabled?(uploader) do
+      _ = State.mark_upload_failed(candidate.source_name, candidate.month, disabled_reason(uploader))
+      :disabled
+    else
+      upload_one(candidate, uploader)
+      :ok
+    end
+  rescue
+    e ->
+      Logger.error("async upload task crashed",
+        source: candidate.source_name,
+        month: candidate.month,
+        error: inspect(e)
+      )
+
+      _ =
+        State.mark_upload_failed(
+          candidate.source_name,
+          candidate.month,
+          "async upload crashed: #{inspect(e)}"
+        )
+
+      :crashed
+  end
+
+  defp await_uploads([]), do: :ok
+
+  defp await_uploads(tasks) do
+    Logger.info("awaiting in-flight uploads", count: length(tasks))
+
+    Enum.each(tasks, fn task ->
+      try do
+        Task.await(task, @upload_await_timeout_ms)
+      catch
+        :exit, reason ->
+          Logger.error("async upload task exited abnormally", reason: inspect(reason))
+          # Task.await(4h) timeout or task crash → make sure the task
+          # is stopped so it doesn't linger after the run ends.
+          _ = Task.shutdown(task, :brutal_kill)
+      end
+    end)
+
+    Logger.info("in-flight uploads drained")
   end
 
   # ---------------------------------------------------------------------------
@@ -202,12 +323,17 @@ defmodule SynologyZipper.Runner do
   # ---------------------------------------------------------------------------
 
   defp run_upload_phase(acc, uploader) do
-    case State.months_pending_upload() do
+    # Skip anything the async phase already handled this tick.
+    candidates =
+      State.months_pending_upload()
+      |> Enum.reject(fn c -> MapSet.member?(acc.attempted, {c.source_name, c.month}) end)
+
+    case candidates do
       [] ->
         acc
 
-      candidates ->
-        Logger.info("upload phase start", candidates: length(candidates))
+      _ ->
+        Logger.info("upload phase start (prior-tick carryover)", candidates: length(candidates))
 
         cond do
           uploader_disabled?(uploader) ->
