@@ -64,6 +64,32 @@ defmodule SynologyZipper.ZipperTest do
       write_file!(Path.join([root, "2026-02-15", "a.mp4"]), "a")
       assert {:ok, {[], _}} = Zipper.collect_files(root, "2026-03")
     end
+
+    test "accepts YY-MM-DD directory names (2-digit year → 20YY)" do
+      root = tmp_dir!("yyshort")
+
+      write_file!(Path.join([root, "25-12-01", "a.mp4"]), "a")
+      write_file!(Path.join([root, "25-12-15", "b.mp4"]), "b")
+      # Out of the target month.
+      write_file!(Path.join([root, "25-11-30", "old.mp4"]), "old")
+
+      assert {:ok, {files, _}} = Zipper.collect_files(root, "2025-12")
+
+      got_rel = files |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+      assert got_rel == ["25-12-01/a.mp4", "25-12-15/b.mp4"]
+    end
+
+    test "accepts mixed YY-MM-DD and YYYY-MM-DD in the same root" do
+      root = tmp_dir!("mixed")
+
+      write_file!(Path.join([root, "25-12-01", "a.mp4"]), "a")
+      write_file!(Path.join([root, "2025-12-15", "b.mp4"]), "b")
+
+      assert {:ok, {files, _}} = Zipper.collect_files(root, "2025-12")
+
+      got_rel = files |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+      assert got_rel == ["2025-12-15/b.mp4", "25-12-01/a.mp4"]
+    end
   end
 
   describe "write_zip/2" do

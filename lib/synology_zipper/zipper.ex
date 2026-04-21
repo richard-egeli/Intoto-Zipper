@@ -15,7 +15,9 @@ defmodule SynologyZipper.Zipper do
       video; recompression just burns CPU for a fraction of a percent.
   """
 
-  @date_dir_re ~r/^(\d{4})-(\d{2})-(\d{2})$/
+  # `YYYY-MM-DD` or `YY-MM-DD` (2-digit year assumed to be 20YY).
+  # Synology's timelapse / camera folders often use the 2-digit form.
+  @date_dir_re ~r/^(\d{2}|\d{4})-(\d{2})-(\d{2})$/
 
   @type result :: %{
           path: String.t() | nil,
@@ -145,10 +147,13 @@ defmodule SynologyZipper.Zipper do
 
   defp matches_month?(dir_name, month) do
     case Regex.run(@date_dir_re, dir_name) do
-      [_, y, m, _] -> "#{y}-#{m}" == month
+      [_, y, m, _] -> "#{expand_year(y)}-#{m}" == month
       _ -> false
     end
   end
+
+  defp expand_year(y) when byte_size(y) == 2, do: "20" <> y
+  defp expand_year(y), do: y
 
   # ---------------------------------------------------------------------------
   # Write
