@@ -49,7 +49,6 @@ defmodule SynologyZipper.IntegrationTest do
         path: tmp,
         start_month: "2025-01",
         grace_days: 3,
-        post_zip: "keep",
         auto_upload: false
       })
 

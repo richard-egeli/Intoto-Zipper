@@ -4,7 +4,7 @@ defmodule SynologyZipper.Uploader.Drive do
   through `google_api_drive`, which is Tesla-based; tests stub it
   with `Tesla.Mock`.
 
-  **Invariants carried from the Go implementation (internal/uploader):**
+  **Invariants:**
 
     1. Never touch anything in Drive outside the configured folder.
        - `list_for_upload/3` scopes by `name='<month>.zip' and '<folder>' in parents`.
@@ -16,6 +16,9 @@ defmodule SynologyZipper.Uploader.Drive do
     3. Idempotency via orphan adoption: before create, list. Exactly
        one match + md5 equal -> adopt. Mismatch -> `:orphan_md5_mismatch`.
        Multiple -> `:ambiguous_orphan`. These are permanent errors.
+    4. Local md5 is computed by streaming the zip in 1 MiB chunks;
+       the upload body is streamed directly from disk via Tesla's
+       multipart file part. Neither path holds the full zip in memory.
   """
 
   alias GoogleApi.Drive.V3.Api.Files
@@ -36,6 +39,10 @@ defmodule SynologyZipper.Uploader.Drive do
           | {:local_zip_read, String.t(), term()}
           | {:transport, term()}
 
+  # 1 MiB streaming chunk for md5 hashing. Keeps peak RAM flat
+  # regardless of zip size.
+  @md5_chunk 1_048_576
+
   @doc """
   Execute one upload job.
 
@@ -44,9 +51,10 @@ defmodule SynologyZipper.Uploader.Drive do
        One match + matching md5 → adopt that file's id and return.
        One match, mismatch md5 → `{:error, {:orphan_md5_mismatch, …}}`.
        Multiple matches → `{:error, {:ambiguous_orphan, …}}`.
-    2. Compute the local zip's md5.
-    3. POST a resumable upload (8 MiB chunks) into `parents=[folder_id]`
-       with `supportsAllDrives=true`, asking Drive for `id, md5Checksum, size`.
+    2. Stream-compute the local zip's md5.
+    3. POST a streamed multipart upload (file part read from disk)
+       into `parents=[folder_id]` with `supportsAllDrives=true`,
+       asking Drive for `id, md5Checksum, size`.
     4. Compare Drive's md5 to ours; on mismatch DELETE the created file
        (the only destructive Drive call in the entire app) and return
        `{:error, {:md5_mismatch, …}}`.
@@ -73,8 +81,8 @@ defmodule SynologyZipper.Uploader.Drive do
 
   @doc false
   def list_for_upload(conn, folder_id, name) do
-    safe_name = String.replace(name, "'", "\\'")
-    q = "name = '#{safe_name}' and '#{folder_id}' in parents and trashed = false"
+    q =
+      "name = '#{escape_q(name)}' and '#{escape_q(folder_id)}' in parents and trashed = false"
 
     case Files.drive_files_list(conn,
            q: q,
@@ -88,6 +96,15 @@ defmodule SynologyZipper.Uploader.Drive do
       {:error, err} ->
         {:error, classify_drive_error(err)}
     end
+  end
+
+  # Drive query-string literal escaping: backslash first, then single
+  # quote. Order matters — escape `\` before `'` or the replacement
+  # backslashes get re-escaped.
+  defp escape_q(s) when is_binary(s) do
+    s
+    |> String.replace("\\", "\\\\")
+    |> String.replace("'", "\\'")
   end
 
   defp decide([]), do: :continue
@@ -127,10 +144,9 @@ defmodule SynologyZipper.Uploader.Drive do
   # ---------------------------------------------------------------------------
 
   defp do_upload(conn, %Job{zip_path: path, drive_folder_id: folder_id}, name) do
-    case ensure_readable(path) do
-      {:ok, body} ->
+    case file_md5(path) do
+      {:ok, local_md5} ->
         start = System.monotonic_time(:millisecond)
-        local_md5 = :crypto.hash(:md5, body) |> Base.encode16(case: :lower)
 
         meta = %File{
           name: name,
@@ -138,15 +154,14 @@ defmodule SynologyZipper.Uploader.Drive do
           parents: [folder_id]
         }
 
-        # `drive_files_create_iodata` accepts an iolist and sends a
-        # single multipart request. Fine for monthly zips; a chunked
-        # resumable path can be introduced later if Drive starts
-        # rejecting uploads above its multipart ceiling.
-        case Files.drive_files_create_iodata(
+        # `drive_files_create_simple` takes a path string and Tesla's
+        # multipart engine streams the file part from disk in chunks,
+        # so peak memory stays flat regardless of zip size.
+        case Files.drive_files_create_simple(
                conn,
                "multipart",
                meta,
-               body,
+               path,
                fields: "id,md5Checksum,size",
                supportsAllDrives: true
              ) do
@@ -188,7 +203,6 @@ defmodule SynologyZipper.Uploader.Drive do
 
   @doc """
   True when the error reason should be retried within the same tick.
-  Matches the Go `IsTransient` decision table.
   """
   @spec transient?(term()) :: boolean()
   def transient?(nil), do: false
@@ -224,19 +238,25 @@ defmodule SynologyZipper.Uploader.Drive do
   defp extract_message(body) when is_binary(body), do: body
   defp extract_message(other), do: inspect(other)
 
-  defp ensure_readable(path) do
-    case Elixir.File.read(path) do
-      {:ok, body} -> {:ok, body}
-      {:error, :enoent} -> {:error, {:local_zip_missing, path}}
-      {:error, reason} -> {:error, {:local_zip_read, path, reason}}
-    end
-  end
-
+  # Streaming md5 — 1 MiB chunks folded through :crypto.hash_*.
   defp file_md5(path) do
-    case Elixir.File.read(path) do
-      {:ok, body} -> {:ok, :crypto.hash(:md5, body) |> Base.encode16(case: :lower)}
-      {:error, :enoent} -> {:error, {:local_zip_missing, path}}
-      {:error, reason} -> {:error, {:local_zip_read, path, reason}}
+    try do
+      hash =
+        path
+        |> Elixir.File.stream!([], @md5_chunk)
+        |> Enum.reduce(:crypto.hash_init(:md5), fn chunk, acc ->
+          :crypto.hash_update(acc, chunk)
+        end)
+        |> :crypto.hash_final()
+        |> Base.encode16(case: :lower)
+
+      {:ok, hash}
+    rescue
+      e in Elixir.File.Error ->
+        case e.reason do
+          :enoent -> {:error, {:local_zip_missing, path}}
+          other -> {:error, {:local_zip_read, path, other}}
+        end
     end
   end
 

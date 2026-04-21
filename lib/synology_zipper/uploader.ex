@@ -1,17 +1,19 @@
 defmodule SynologyZipper.Uploader do
   @moduledoc """
-  GenServer that owns the Drive API `Tesla.Client` (authenticated via
-  Goth) and serves `upload/2` requests serially.
+  GenServer that owns the Drive credentials (service-account JSON +
+  scopes) and serves `upload/2` requests serially.
 
   State is one of:
 
-    * `{:ready, conn}` — service account credentials loaded, ready to
-      upload;
+    * `{:ready, :auth, %{creds: creds, scopes: scopes}}` — credentials
+      loaded; every `upload/2` fetches a fresh OAuth access token via
+      `Goth.Token.fetch/1` and builds a one-shot `Tesla.Client`. Short
+      per-upload round-trip to Google, but no stale-token failure mode.
+    * `{:ready, :static_conn, conn}` — test mode with an injected
+      `Tesla.Client` (typically wired up against `Tesla.Mock`).
     * `{:disabled, reason}` — no usable credentials; every `upload/2`
-      returns `{:error, :disabled}`. Logged once at startup so the UI
-      can surface a banner.
-
-  Ports `internal/uploader/client.go` + `uploader.go`.
+      returns `{:error, {:disabled, reason}}`. Logged once at startup
+      so the UI can surface a banner.
 
   *This module does not retry.* The runner wraps each call in
   `SynologyZipper.Retry.run/3` using `Drive.transient?/1`.
@@ -25,6 +27,7 @@ defmodule SynologyZipper.Uploader do
 
   @name __MODULE__
   @default_timeout :timer.minutes(15)
+  @scopes ["https://www.googleapis.com/auth/drive.file"]
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -70,11 +73,11 @@ defmodule SynologyZipper.Uploader do
     state =
       case Keyword.get(opts, :conn) do
         nil -> build_state(opts)
-        conn -> {:ready, conn}
+        conn -> {:ready, :static_conn, conn}
       end
 
     case state do
-      {:ready, _} ->
+      {:ready, _, _} ->
         Logger.info("drive uploader ready")
 
       {:disabled, reason} ->
@@ -85,8 +88,19 @@ defmodule SynologyZipper.Uploader do
   end
 
   @impl true
-  def handle_call({:upload, job}, _from, {:ready, conn} = state) do
+  def handle_call({:upload, job}, _from, {:ready, :static_conn, conn} = state) do
     {:reply, Drive.upload(conn, job), state}
+  end
+
+  def handle_call({:upload, job}, _from, {:ready, :auth, %{creds: creds, scopes: scopes}} = state) do
+    case Goth.Token.fetch(source: {:service_account, creds, scopes: scopes}) do
+      {:ok, %{token: token}} ->
+        conn = GoogleApi.Drive.V3.Connection.new(token)
+        {:reply, Drive.upload(conn, job), state}
+
+      {:error, reason} ->
+        {:reply, {:error, {:auth, reason}}, state}
+    end
   end
 
   def handle_call({:upload, _job}, _from, {:disabled, reason} = state) do
@@ -122,8 +136,8 @@ defmodule SynologyZipper.Uploader do
   defp load_service_account(path) do
     with {:read, {:ok, body}} <- {:read, Elixir.File.read(path)},
          {:parse, {:ok, creds}} <- {:parse, Jason.decode(body)},
-         {:ok, conn} <- build_conn(creds) do
-      {:ready, conn}
+         {:validate, %{"client_email" => _}} <- {:validate, creds} do
+      {:ready, :auth, %{creds: creds, scopes: @scopes}}
     else
       {:read, {:error, reason}} ->
         {:disabled, "read credentials #{inspect(path)}: #{inspect(reason)}"}
@@ -131,28 +145,8 @@ defmodule SynologyZipper.Uploader do
       {:parse, {:error, reason}} ->
         {:disabled, "parse credentials JSON: #{inspect(reason)}"}
 
-      {:error, reason} ->
-        {:disabled, "init drive client: #{inspect(reason)}"}
+      {:validate, _} ->
+        {:disabled, "credentials JSON missing client_email"}
     end
   end
-
-  defp build_conn(%{"client_email" => _} = creds) do
-    # Static token for now — a Goth server can be introduced once
-    # runtime plumbing lands (Task 7). The Drive client itself is
-    # ready either way.
-    scopes = ["https://www.googleapis.com/auth/drive.file"]
-
-    source = {:service_account, creds, scopes: scopes}
-
-    try do
-      {:ok, token} = Goth.Token.fetch(source: source)
-      {:ok, GoogleApi.Drive.V3.Connection.new(token.token)}
-    rescue
-      e -> {:error, e}
-    catch
-      _, reason -> {:error, reason}
-    end
-  end
-
-  defp build_conn(_), do: {:error, :missing_client_email}
 end

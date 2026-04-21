@@ -161,7 +161,6 @@ defmodule SynologyZipperWeb.SourceLive do
     |> Map.put("name", String.trim(params["name"] || ""))
     |> Map.put("path", String.trim(params["path"] || ""))
     |> Map.put("start_month", String.trim(params["start_month"] || ""))
-    |> Map.put("move_to", String.trim(params["move_to"] || ""))
     |> Map.put("drive_folder_id", String.trim(params["drive_folder_id"] || ""))
     |> Map.put("auto_upload", parse_bool(params["auto_upload"]))
     |> Map.update("grace_days", 0, fn
@@ -173,7 +172,6 @@ defmodule SynologyZipperWeb.SourceLive do
         :error -> 0
       end
     end)
-    |> Map.put_new("post_zip", "keep")
   end
 
   defp parse_bool(true), do: true

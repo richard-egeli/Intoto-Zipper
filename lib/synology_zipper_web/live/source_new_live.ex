@@ -16,7 +16,7 @@ defmodule SynologyZipperWeb.SourceNewLive do
   alias SynologyZipper.State
   alias SynologyZipper.State.Source
 
-  @defaults %Source{post_zip: "keep", grace_days: 3, auto_upload: false}
+  @defaults %Source{grace_days: 3, auto_upload: false}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -66,7 +66,6 @@ defmodule SynologyZipperWeb.SourceNewLive do
     |> Map.put("name", String.trim(params["name"] || ""))
     |> Map.put("path", String.trim(params["path"] || ""))
     |> Map.put("start_month", String.trim(params["start_month"] || ""))
-    |> Map.put("move_to", String.trim(params["move_to"] || ""))
     |> Map.put("drive_folder_id", String.trim(params["drive_folder_id"] || ""))
     |> Map.put("auto_upload", parse_bool(params["auto_upload"]))
     |> Map.update("grace_days", 3, fn
@@ -79,7 +78,6 @@ defmodule SynologyZipperWeb.SourceNewLive do
           :error -> 3
         end
     end)
-    |> Map.put_new("post_zip", "keep")
   end
 
   defp parse_bool(true), do: true

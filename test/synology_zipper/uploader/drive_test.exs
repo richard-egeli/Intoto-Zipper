@@ -254,6 +254,81 @@ defmodule SynologyZipper.Uploader.DriveTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Retrofit: Drive query-string escaping
+  # ---------------------------------------------------------------------------
+  #
+  # Tests-after, not TDD. Pin the escape rule for folder_id + name in the
+  # `q=` parameter so it can't silently regress. Drive's query language
+  # requires literal `\` to be doubled AND literal `'` to be preceded by
+  # `\`; and the order matters — doubling must happen first.
+
+  describe "list_for_upload/3 — query escaping" do
+    test "escapes `\\` (doubled) and `'` (prefixed) in folder_id and name" do
+      parent = self()
+
+      Tesla.Mock.mock(fn env ->
+        if env.method == :get and env.url == "https://www.googleapis.com/drive/v3/files" do
+          send(parent, {:q, Keyword.get(env.query || [], :q)})
+          json(%{"files" => []})
+        end
+      end)
+
+      # Two-backslash and one-backslash-plus-quote, spelled out so the
+      # assertion isn't buried under source-level escape sequences.
+      bs2 = "\\\\"
+      bsq = "\\'"
+
+      folder_id = "fo\\ld'er"
+      name = "a'b\\c.zip"
+
+      {:ok, []} = Drive.list_for_upload(conn(), folder_id, name)
+
+      assert_receive {:q, q}
+      assert String.contains?(q, "'fo" <> bs2 <> "ld" <> bsq <> "er'")
+      assert String.contains?(q, "'a" <> bsq <> "b" <> bs2 <> "c.zip'")
+      # Scope clause must still be intact.
+      assert String.contains?(q, "in parents and trashed = false")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Retrofit: streaming md5 for files larger than one hash chunk
+  # ---------------------------------------------------------------------------
+  #
+  # Tests-after, not TDD. `file_md5/1` streams the zip through
+  # `:crypto.hash_init/update/final` in 1 MiB slices. The other tests all
+  # use tiny files (< 1 MiB) so only the single-chunk path is exercised;
+  # this one crosses the chunk boundary to pin the fold.
+
+  describe "upload/2 — md5 across multiple stream chunks" do
+    test "2 MiB file hashes and uploads cleanly" do
+      # 2 MiB of deterministic bytes — two full 1 MiB fold steps.
+      body = :binary.copy("abcdefgh", 256 * 1024)
+      assert byte_size(body) == 2 * 1024 * 1024
+
+      {path, md5} = tmp_zip!(body)
+
+      track!(fn env ->
+        case {env.method, env.url} do
+          {:get, "https://www.googleapis.com/drive/v3/files"} ->
+            json(%{"files" => []})
+
+          {:post, "https://www.googleapis.com/upload/drive/v3/files"} ->
+            json(%{
+              "id" => "LARGE_OK",
+              "md5Checksum" => md5,
+              "size" => "#{byte_size(body)}"
+            })
+        end
+      end)
+
+      assert {:ok, result} = Drive.upload(conn(), job(path))
+      assert result.drive_file_id == "LARGE_OK"
+      assert result.bytes == byte_size(body)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # transient? table
   # ---------------------------------------------------------------------------
 

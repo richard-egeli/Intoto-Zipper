@@ -1,10 +1,11 @@
 defmodule SynologyZipper.Runner do
   @moduledoc """
-  Orchestrates one scheduler tick: plan → zip → post-zip for every
-  configured source, then run the upload phase.
+  Orchestrates one scheduler tick: plan → zip for every configured
+  source, then run the upload phase. Source directories are always
+  kept intact after zipping — the move-on-success behaviour was
+  dropped with the UI that configured it.
 
-  Ports `internal/runner/runner.go` + `upload_phase.go`. Behaviour
-  preserved exactly:
+  Behaviour:
 
     * Upload failures do NOT bump the run's `months_failed` counter;
       they are recorded per-month in `upload_error` / `upload_attempts`.
@@ -15,7 +16,7 @@ defmodule SynologyZipper.Runner do
 
   require Logger
 
-  alias SynologyZipper.{PostZip, Planner, Retry, State, Zipper}
+  alias SynologyZipper.{Planner, Retry, State, Zipper}
   alias SynologyZipper.Uploader
   alias SynologyZipper.Uploader.{Drive, Job}
 
@@ -134,32 +135,7 @@ defmodule SynologyZipper.Runner do
           skipped: skipped
         )
 
-        acc = %{acc | months_zipped: acc.months_zipped + 1}
-        run_post_zip(source, month, acc)
-    end
-  end
-
-  defp run_post_zip(source, month, acc) do
-    params = %{
-      action: source.post_zip,
-      source_name: source.name,
-      source_path: source.path,
-      month: month,
-      move_to: source.move_to
-    }
-
-    case PostZip.execute(params) do
-      :ok ->
-        acc
-
-      {:error, reason} ->
-        Logger.error("post_zip failed",
-          source: source.name,
-          month: month,
-          error: inspect(reason)
-        )
-
-        %{acc | exit_status: if(acc.exit_status == "", do: "partial", else: acc.exit_status)}
+        %{acc | months_zipped: acc.months_zipped + 1}
     end
   end
 

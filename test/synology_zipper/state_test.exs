@@ -25,8 +25,10 @@ defmodule SynologyZipper.StateTest do
       assert length(State.list_sources()) == 1
     end
 
-    test "upsert_source rejects invalid post_zip" do
-      assert {:error, cs} = State.upsert_source(%{@source_attrs | name: "bad"} |> Map.put(:post_zip, "delete"))
+    test "upsert_source rejects when required fields are missing" do
+      assert {:error, cs} =
+               State.upsert_source(%{name: "bad", path: ""})
+
       refute cs.valid?
     end
 

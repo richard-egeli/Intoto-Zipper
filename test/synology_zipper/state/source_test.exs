@@ -8,8 +8,6 @@ defmodule SynologyZipper.State.SourceTest do
     path: "/srv/video/cams",
     start_month: "2024-01",
     grace_days: 3,
-    post_zip: "keep",
-    move_to: "",
     auto_upload: false,
     drive_folder_id: ""
   }
@@ -50,35 +48,6 @@ defmodule SynologyZipper.State.SourceTest do
       assert Map.has_key?(errors_on(cs), :grace_days)
     end
 
-    test "rejects unknown post_zip action" do
-      # Covers legacy "delete" (migration 4 removed it) plus common
-      # typos / injection-like values someone might sneak in via the web form.
-      for action <- ["delete", "DELETE", "Delete", "rm", "remove", "purge", "garbage"] do
-        cs = Source.changeset(%Source{}, %{@valid_attrs | post_zip: action})
-        refute cs.valid?, "expected post_zip=#{inspect(action)} to be rejected"
-        assert Map.has_key?(errors_on(cs), :post_zip)
-      end
-    end
-
-    test "accepts post_zip keep and move" do
-      for action <- ["keep", "move"] do
-        attrs = %{@valid_attrs | post_zip: action, move_to: "/srv/archive"}
-        cs = Source.changeset(%Source{}, attrs)
-        assert cs.valid?, "expected post_zip=#{inspect(action)} to be accepted"
-      end
-    end
-
-    test "post_zip=move requires move_to" do
-      cs = Source.changeset(%Source{}, %{@valid_attrs | post_zip: "move", move_to: ""})
-      refute cs.valid?
-      assert "is required when post_zip=move" in errors_on(cs).move_to
-    end
-
-    test "post_zip=keep does not require move_to" do
-      cs = Source.changeset(%Source{}, %{@valid_attrs | post_zip: "keep", move_to: ""})
-      assert cs.valid?
-    end
-
     test "auto_upload=true requires drive_folder_id" do
       cs =
         Source.changeset(%Source{}, %{
@@ -107,8 +76,6 @@ defmodule SynologyZipper.State.SourceTest do
     test "insert/read preserves all columns" do
       attrs =
         @valid_attrs
-        |> Map.put(:post_zip, "move")
-        |> Map.put(:move_to, "/archive")
         |> Map.put(:auto_upload, true)
         |> Map.put(:drive_folder_id, "drive-folder-123")
         |> Map.put(:created_at, ~U[2024-05-01 00:00:00Z])
@@ -122,8 +89,6 @@ defmodule SynologyZipper.State.SourceTest do
       assert fetched.path == attrs.path
       assert fetched.start_month == attrs.start_month
       assert fetched.grace_days == 3
-      assert fetched.post_zip == "move"
-      assert fetched.move_to == "/archive"
       assert fetched.auto_upload == true
       assert fetched.drive_folder_id == "drive-folder-123"
     end

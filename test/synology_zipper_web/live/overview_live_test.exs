@@ -23,6 +23,21 @@ defmodule SynologyZipperWeb.OverviewLiveTest do
     assert html =~ "idle"
   end
 
+  # Retrofit test for the CSP header added to the :browser pipeline.
+  # Tests-after, not TDD — pins the currently-shipping policy so future
+  # pipeline edits can't silently weaken it.
+  test "sets a Content-Security-Policy header on every page", %{conn: conn} do
+    conn = get(conn, "/")
+    assert [csp] = get_resp_header(conn, "content-security-policy")
+    assert csp =~ "default-src 'self'"
+    assert csp =~ "script-src 'self'"
+    assert csp =~ "style-src 'self' 'unsafe-inline'"
+    assert csp =~ "connect-src 'self' ws: wss:"
+    assert csp =~ "frame-ancestors 'none'"
+    assert csp =~ "base-uri 'self'"
+    assert csp =~ "form-action 'self'"
+  end
+
   test "renders a source row that links to the source page", %{conn: conn} do
     {:ok, _} =
       State.upsert_source(%{
@@ -30,7 +45,6 @@ defmodule SynologyZipperWeb.OverviewLiveTest do
         path: "/mnt/cams",
         start_month: "2026-01",
         grace_days: 3,
-        post_zip: "keep",
         auto_upload: false
       })
 
@@ -50,7 +64,6 @@ defmodule SynologyZipperWeb.OverviewLiveTest do
         path: "/mnt/cams",
         start_month: "2026-01",
         grace_days: 3,
-        post_zip: "keep",
         auto_upload: false
       })
 

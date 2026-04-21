@@ -39,7 +39,6 @@ defmodule SynologyZipper.RunnerTest do
         path: source_path,
         start_month: "2026-03",
         grace_days: 3,
-        post_zip: "keep",
         auto_upload: false
       })
 
@@ -54,7 +53,7 @@ defmodule SynologyZipper.RunnerTest do
     months = State.list_months("cams")
     assert [%{month: "2026-03", status: "zipped"}] = months
 
-    # Source files still present (post_zip=keep).
+    # Source files are always kept after zipping.
     assert Elixir.File.exists?(Path.join([source_path, "2026-03-01", "a.mp4"]))
   end
 
@@ -68,7 +67,6 @@ defmodule SynologyZipper.RunnerTest do
         path: source_path,
         start_month: "2026-03",
         grace_days: 3,
-        post_zip: "keep",
         auto_upload: true,
         drive_folder_id: "folder-x"
       })
@@ -101,7 +99,6 @@ defmodule SynologyZipper.RunnerTest do
         path: source_path,
         start_month: "2026-03",
         grace_days: 3,
-        post_zip: "keep",
         auto_upload: true,
         drive_folder_id: "folder-x"
       })
@@ -134,7 +131,6 @@ defmodule SynologyZipper.RunnerTest do
         path: source_path,
         start_month: "2026-03",
         grace_days: 3,
-        post_zip: "keep",
         auto_upload: true,
         drive_folder_id: "folder-x"
       })
@@ -158,10 +154,8 @@ defmodule SynologyZipper.RunnerTest do
     assert month.upload_error =~ "drive_error"
   end
 
-  test "post_zip=move relocates the month directory; no destructive call on :keep" do
+  test "source files are always kept after zipping" do
     source_path = tmp_dir!("src5")
-    move_to = tmp_dir!("archive")
-
     write_file!(Path.join([source_path, "2026-03-01", "a.mp4"]), "aaa")
 
     {:ok, _} =
@@ -170,8 +164,6 @@ defmodule SynologyZipper.RunnerTest do
         path: source_path,
         start_month: "2026-03",
         grace_days: 3,
-        post_zip: "move",
-        move_to: move_to,
         auto_upload: false
       })
 
@@ -179,9 +171,7 @@ defmodule SynologyZipper.RunnerTest do
 
     _ = Runner.run(now: ~U[2026-04-04 00:00:00Z], uploader: stub)
 
-    refute Elixir.File.exists?(Path.join([source_path, "2026-03-01", "a.mp4"]))
-    assert Elixir.File.read!(Path.join([move_to, "cams", "2026-03-01", "a.mp4"])) == "aaa"
-    # But the zip artefact sitting in source_path survives.
+    assert Elixir.File.exists?(Path.join([source_path, "2026-03-01", "a.mp4"]))
     assert Elixir.File.exists?(Path.join(source_path, "2026-03.zip"))
   end
 end

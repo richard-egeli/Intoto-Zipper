@@ -11,9 +11,13 @@ defmodule SynologyZipper.Application do
       [
         SynologyZipperWeb.Telemetry,
         SynologyZipper.Repo,
+        # Migrate synchronously on every boot — single-instance Synology
+        # deploy, so no blue/green contention. If you later go
+        # multi-instance, move this to `/app/bin/migrate` and set
+        # `skip: System.get_env("RELEASE_NAME") != nil`.
         {Ecto.Migrator,
          repos: Application.fetch_env!(:synology_zipper, :ecto_repos),
-         skip: skip_migrations?()},
+         skip: false},
         {DNSCluster, query: Application.get_env(:synology_zipper, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: SynologyZipper.PubSub},
         SynologyZipperWeb.Endpoint
@@ -61,8 +65,4 @@ defmodule SynologyZipper.Application do
     :ok
   end
 
-  defp skip_migrations?() do
-    # By default, sqlite migrations are run when using a release
-    System.get_env("RELEASE_NAME") != nil
-  end
 end
