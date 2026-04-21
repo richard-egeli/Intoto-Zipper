@@ -107,7 +107,16 @@ defmodule SynologyZipper.Runner do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     {:ok, _} = State.start_month_attempt(source.name, month, now)
 
-    case Zipper.write_zip(source.path, month) do
+    watcher = start_progress_watcher(source.name, source.path, month)
+
+    try_result =
+      try do
+        Zipper.write_zip(source.path, month)
+      after
+        stop_progress_watcher(watcher)
+      end
+
+    case try_result do
       {:error, reason} ->
         Logger.error("zip failed",
           source: source.name,
@@ -138,6 +147,55 @@ defmodule SynologyZipper.Runner do
         %{acc | months_zipped: acc.months_zipped + 1}
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Per-month progress watcher
+  # ---------------------------------------------------------------------------
+  #
+  # `:zip.create/3` is a single blocking call with no per-file callback,
+  # so we can't report progress from inside it. Instead we spawn a tiny
+  # watcher that polls the `.<month>.zip.tmp` file's size every 2s and
+  # broadcasts `{:zip_progress, source_name, month, bytes_so_far}` on
+  # the per-source topic. The LiveView handles it and updates the row.
+  # Stops on `:stop` or when its parent dies.
+
+  @progress_poll_interval_ms 2_000
+
+  defp start_progress_watcher(source_name, source_path, month) do
+    tmp = Path.join(source_path, ".#{month}.zip.tmp")
+    topic = State.source_topic(source_name)
+    pubsub = SynologyZipper.PubSub
+
+    spawn(fn -> progress_loop(tmp, source_name, month, topic, pubsub) end)
+  end
+
+  defp progress_loop(tmp, source_name, month, topic, pubsub) do
+    receive do
+      :stop -> :ok
+    after
+      @progress_poll_interval_ms ->
+        case Elixir.File.stat(tmp) do
+          {:ok, %Elixir.File.Stat{size: size}} when size > 0 ->
+            Phoenix.PubSub.broadcast(
+              pubsub,
+              topic,
+              {:zip_progress, source_name, month, size}
+            )
+
+          _ ->
+            :ok
+        end
+
+        progress_loop(tmp, source_name, month, topic, pubsub)
+    end
+  end
+
+  defp stop_progress_watcher(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: send(pid, :stop)
+    :ok
+  end
+
+  defp stop_progress_watcher(_), do: :ok
 
   # ---------------------------------------------------------------------------
   # Upload phase

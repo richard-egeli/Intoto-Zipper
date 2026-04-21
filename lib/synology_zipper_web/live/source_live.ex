@@ -48,6 +48,7 @@ defmodule SynologyZipperWeb.SourceLive do
          |> assign(:source, source)
          |> assign_form(source)
          |> assign(:auto_upload_checked, source.auto_upload)
+         |> assign(:progress, %{})
          |> assign(:months, State.list_months(name))}
     end
   end
@@ -139,12 +140,36 @@ defmodule SynologyZipperWeb.SourceLive do
     {:noreply, push_navigate(socket, to: ~p"/")}
   end
 
-  def handle_info({:month_changed, name, _m}, %{assigns: %{original_name: name}} = socket) do
-    {:noreply, assign(socket, :months, State.list_months(name))}
+  def handle_info({:month_changed, name, month}, %{assigns: %{original_name: name}} = socket) do
+    # Clear any in-flight progress for this month — the row has a
+    # definitive status now (zipped, failed, etc) and a real byte
+    # count in the DB.
+    progress = Map.delete(socket.assigns.progress, month)
+
+    {:noreply,
+     socket
+     |> assign(:months, State.list_months(name))
+     |> assign(:progress, progress)}
   end
 
-  def handle_info({:month_deleted, name, _m}, %{assigns: %{original_name: name}} = socket) do
-    {:noreply, assign(socket, :months, State.list_months(name))}
+  def handle_info({:month_deleted, name, month}, %{assigns: %{original_name: name}} = socket) do
+    progress = Map.delete(socket.assigns.progress, month)
+
+    {:noreply,
+     socket
+     |> assign(:months, State.list_months(name))
+     |> assign(:progress, progress)}
+  end
+
+  def handle_info({:zip_progress, name, month, bytes}, %{assigns: %{original_name: name}} = socket) do
+    {:noreply, assign(socket, :progress, Map.put(socket.assigns.progress, month, bytes))}
+  end
+
+  # Runner cleared the progress map when the run ended, but we also
+  # drop it defensively on run_end so the UI doesn't leave a stale
+  # progress value for a month that finished without a final broadcast.
+  def handle_info({:run_end, _id, _status}, socket) do
+    {:noreply, assign(socket, :progress, %{})}
   end
 
   # {:run_*, ...} handled by the shared hook.
@@ -322,13 +347,19 @@ defmodule SynologyZipperWeb.SourceLive do
                 {m.month}
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5">
-                <.status_badge status={m.status} />
+                <.status_badge status={display_status(m, @running)} />
               </td>
               <td class="border-b border-gray-100 px-4 py-2.5 text-right tabular-nums">
                 {m.file_count || 0}
               </td>
               <td class="border-b border-gray-100 px-4 py-2.5 text-right tabular-nums">
-                {Helpers.human_bytes(m.zip_bytes || 0)}
+                <%= if bytes = Map.get(@progress, m.month) do %>
+                  <span class="text-amber-700" title="currently zipping">
+                    {Helpers.human_bytes(bytes)}…
+                  </span>
+                <% else %>
+                  {Helpers.human_bytes(m.zip_bytes || 0)}
+                <% end %>
               </td>
               <td class="border-b border-gray-100 px-4 py-2.5 text-right tabular-nums">
                 {m.attempt_count}
@@ -397,7 +428,7 @@ defmodule SynologyZipperWeb.SourceLive do
       case status do
         s when s in ["zipped", "ok"] -> {"bg-emerald-50", "text-emerald-700", "border-emerald-200"}
         s when s in ["failed", "error"] -> {"bg-red-50", "text-red-700", "border-red-200"}
-        "partial" -> {"bg-amber-50", "text-amber-700", "border-amber-200"}
+        s when s in ["partial", "running"] -> {"bg-amber-50", "text-amber-700", "border-amber-200"}
         _ -> {"bg-gray-50", "text-gray-500", "border-gray-200"}
       end
 
@@ -414,6 +445,14 @@ defmodule SynologyZipperWeb.SourceLive do
     </span>
     """
   end
+
+  # Rows whose DB status is `failed` but which haven't finished and
+  # whose scheduler is currently running are actually in-flight — show
+  # them as `running` in the UI. Keeps the on-disk state safe for
+  # crash recovery (always `failed` mid-attempt) while the UI reflects
+  # what the operator actually sees.
+  defp display_status(%{status: "failed", finished_at: nil}, true), do: "running"
+  defp display_status(%{status: s}, _), do: s
 
   attr :month, :map, required: true
 
