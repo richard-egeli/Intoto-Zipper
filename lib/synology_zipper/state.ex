@@ -19,7 +19,9 @@ defmodule SynologyZipper.State do
   import Ecto.Query, warn: false
 
   alias SynologyZipper.Repo
-  alias SynologyZipper.State.{Month, Run, Source}
+  alias SynologyZipper.State.{Month, Run, Setting, Source}
+
+  @drive_credentials_key "drive_credentials"
 
   @pubsub SynologyZipper.PubSub
 
@@ -474,6 +476,88 @@ defmodule SynologyZipper.State do
   end
 
   # ---------------------------------------------------------------------------
+  # Drive credentials (uploaded JSON service-account key)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the parsed Google service-account credentials map, or `nil`
+  when none have been uploaded. Failure to decode stored JSON is
+  treated as "not configured" rather than an error so a corrupted row
+  doesn't take the app down.
+  """
+  @spec get_drive_credentials() :: map() | nil
+  def get_drive_credentials do
+    with %Setting{value: json} <- Repo.get(Setting, @drive_credentials_key),
+         {:ok, creds} <- Jason.decode(json) do
+      creds
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Returns just the service-account email for the uploaded
+  credentials, or `nil` when none are configured. Used by the UI to
+  show which account the app will upload as.
+  """
+  @spec get_drive_credentials_email() :: String.t() | nil
+  def get_drive_credentials_email do
+    case get_drive_credentials() do
+      %{"client_email" => email} -> email
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Stores a Google service-account key (raw JSON string). Validates
+  that the JSON parses and carries the two fields Goth needs
+  (`client_email` + `private_key`). Broadcasts `:settings_changed` on
+  success.
+  """
+  @spec put_drive_credentials(String.t()) ::
+          {:ok, %Setting{}} | {:error, :invalid_json | :missing_required_fields | term()}
+  def put_drive_credentials(json) when is_binary(json) do
+    with {:ok, creds} <- Jason.decode(json),
+         true <- has_required_fields?(creds) do
+      result =
+        %Setting{}
+        |> Setting.changeset(%{key: @drive_credentials_key, value: json})
+        |> Repo.insert(
+          on_conflict: {:replace, [:value]},
+          conflict_target: :key
+        )
+
+      case result do
+        {:ok, _} = ok ->
+          broadcast_settings_changed()
+          ok
+
+        {:error, _} = err ->
+          err
+      end
+    else
+      {:error, %Jason.DecodeError{}} -> {:error, :invalid_json}
+      false -> {:error, :missing_required_fields}
+    end
+  end
+
+  @doc "Removes any stored Drive credentials. Broadcasts `:settings_changed`. Idempotent."
+  @spec delete_drive_credentials() :: :ok
+  def delete_drive_credentials do
+    from(s in Setting, where: s.key == ^@drive_credentials_key)
+    |> Repo.delete_all()
+
+    broadcast_settings_changed()
+    :ok
+  end
+
+  defp has_required_fields?(%{"client_email" => e, "private_key" => k})
+       when is_binary(e) and byte_size(e) > 0 and is_binary(k) and byte_size(k) > 0,
+       do: true
+
+  defp has_required_fields?(_), do: false
+
+  # ---------------------------------------------------------------------------
   # PubSub topic helpers
   # ---------------------------------------------------------------------------
 
@@ -486,6 +570,9 @@ defmodule SynologyZipper.State do
   @doc "Topic for `{:run_changed, id}` events."
   def runs_topic, do: "runs"
 
+  @doc "Topic for settings changes (`:settings_changed`). Currently just Drive credentials."
+  def settings_topic, do: "settings"
+
   @doc "Subscribe the calling process to `sources_topic/0`."
   def subscribe_sources, do: Phoenix.PubSub.subscribe(@pubsub, sources_topic())
 
@@ -494,6 +581,9 @@ defmodule SynologyZipper.State do
 
   @doc "Subscribe the calling process to `runs_topic/0`."
   def subscribe_runs, do: Phoenix.PubSub.subscribe(@pubsub, runs_topic())
+
+  @doc "Subscribe the calling process to `settings_topic/0`."
+  def subscribe_settings, do: Phoenix.PubSub.subscribe(@pubsub, settings_topic())
 
   # ---------------------------------------------------------------------------
   # Internals
@@ -543,5 +633,9 @@ defmodule SynologyZipper.State do
 
   defp broadcast_run_changed(run_id) do
     Phoenix.PubSub.broadcast(@pubsub, runs_topic(), {:run_changed, run_id})
+  end
+
+  defp broadcast_settings_changed do
+    Phoenix.PubSub.broadcast(@pubsub, settings_topic(), :settings_changed)
   end
 end

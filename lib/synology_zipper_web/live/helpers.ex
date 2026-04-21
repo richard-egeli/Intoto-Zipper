@@ -8,13 +8,10 @@ defmodule SynologyZipperWeb.Live.Helpers do
   alias SynologyZipper.{State, Uploader}
 
   @doc """
-  Returns the credentials-missing banner message (or `nil`). Mirrors
-  `web.go:bannerWarning` exactly:
-
-    * Nothing when the uploader is not disabled.
-    * Nothing when the uploader is disabled but no source has
-      `auto_upload=true` (feature not in use, banner would be noise).
-    * Otherwise, a human-readable sentence naming the missing path.
+  Returns the credentials-missing banner message (or `nil`). Shown
+  when the uploader is disabled AND at least one source has
+  `auto_upload=true` — no point surfacing the banner when the feature
+  isn't in use.
   """
   def banner_warning do
     disabled? =
@@ -26,16 +23,7 @@ defmodule SynologyZipperWeb.Live.Helpers do
 
     with true <- disabled?,
          true <- State.any_auto_upload?() do
-      case System.get_env("GOOGLE_APPLICATION_CREDENTIALS") do
-        nil ->
-          "Google Drive credentials not found at $GOOGLE_APPLICATION_CREDENTIALS. Uploads are disabled."
-
-        "" ->
-          "Google Drive credentials not found at $GOOGLE_APPLICATION_CREDENTIALS. Uploads are disabled."
-
-        path ->
-          "Google Drive credentials not found at #{path}. Uploads are disabled."
-      end
+      "No Google Drive credentials configured. Upload a service-account key in Settings to enable uploads."
     else
       _ -> nil
     end

@@ -276,6 +276,76 @@ defmodule SynologyZipper.StateTest do
     end
   end
 
+  describe "drive credentials" do
+    @valid_creds %{
+      "client_email" => "svc@example.iam.gserviceaccount.com",
+      "private_key" => "-----BEGIN PRIVATE KEY-----\nAAA\n-----END PRIVATE KEY-----\n"
+    }
+
+    test "get_drive_credentials returns nil when nothing is stored" do
+      assert State.get_drive_credentials() == nil
+      assert State.get_drive_credentials_email() == nil
+    end
+
+    test "put_drive_credentials stores and get returns the parsed map" do
+      json = Jason.encode!(@valid_creds)
+      assert {:ok, _} = State.put_drive_credentials(json)
+
+      assert State.get_drive_credentials() == @valid_creds
+      assert State.get_drive_credentials_email() == @valid_creds["client_email"]
+    end
+
+    test "put_drive_credentials replaces existing credentials on re-upload" do
+      first = Jason.encode!(Map.put(@valid_creds, "client_email", "first@example.iam.gserviceaccount.com"))
+      second = Jason.encode!(Map.put(@valid_creds, "client_email", "second@example.iam.gserviceaccount.com"))
+
+      assert {:ok, _} = State.put_drive_credentials(first)
+      assert {:ok, _} = State.put_drive_credentials(second)
+
+      assert State.get_drive_credentials_email() == "second@example.iam.gserviceaccount.com"
+    end
+
+    test "put_drive_credentials rejects invalid JSON" do
+      assert {:error, :invalid_json} = State.put_drive_credentials("{not json")
+      assert State.get_drive_credentials() == nil
+    end
+
+    test "put_drive_credentials rejects JSON missing client_email" do
+      json = Jason.encode!(Map.delete(@valid_creds, "client_email"))
+      assert {:error, :missing_required_fields} = State.put_drive_credentials(json)
+    end
+
+    test "put_drive_credentials rejects JSON missing private_key" do
+      json = Jason.encode!(Map.delete(@valid_creds, "private_key"))
+      assert {:error, :missing_required_fields} = State.put_drive_credentials(json)
+    end
+
+    test "delete_drive_credentials removes the stored credentials" do
+      json = Jason.encode!(@valid_creds)
+      {:ok, _} = State.put_drive_credentials(json)
+      assert State.get_drive_credentials() != nil
+
+      :ok = State.delete_drive_credentials()
+      assert State.get_drive_credentials() == nil
+      assert State.get_drive_credentials_email() == nil
+    end
+
+    test "delete is idempotent when nothing is stored" do
+      assert :ok = State.delete_drive_credentials()
+      assert :ok = State.delete_drive_credentials()
+    end
+
+    test "put/delete broadcast :settings_changed" do
+      :ok = State.subscribe_settings()
+
+      {:ok, _} = State.put_drive_credentials(Jason.encode!(@valid_creds))
+      assert_receive :settings_changed
+
+      :ok = State.delete_drive_credentials()
+      assert_receive :settings_changed
+    end
+  end
+
   describe "list_sources_with_stats" do
     test "returns derived columns" do
       {:ok, _} =

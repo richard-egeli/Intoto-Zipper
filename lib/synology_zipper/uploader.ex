@@ -1,19 +1,24 @@
 defmodule SynologyZipper.Uploader do
   @moduledoc """
-  GenServer that owns the Drive credentials (service-account JSON +
-  scopes) and serves `upload/2` requests serially.
+  GenServer that serves `upload/2` requests serially — the BEAM
+  serialises access so two concurrent runs don't pound the Drive API
+  in parallel.
 
   State is one of:
 
-    * `{:ready, :auth, %{creds: creds, scopes: scopes}}` — credentials
-      loaded; every `upload/2` fetches a fresh OAuth access token via
-      `Goth.Token.fetch/1` and builds a one-shot `Tesla.Client`. Short
-      per-upload round-trip to Google, but no stale-token failure mode.
-    * `{:ready, :static_conn, conn}` — test mode with an injected
-      `Tesla.Client` (typically wired up against `Tesla.Mock`).
-    * `{:disabled, reason}` — no usable credentials; every `upload/2`
-      returns `{:error, {:disabled, reason}}`. Logged once at startup
-      so the UI can surface a banner.
+    * `:dynamic` — production mode. Per upload, read the stored
+      service-account JSON from the DB (see
+      `SynologyZipper.State.get_drive_credentials/0`), fetch a fresh
+      OAuth access token via `Goth.Token.fetch/1`, build a one-shot
+      `Tesla.Client`, hand it to `Drive.upload/2`. If no credentials
+      are configured, every call returns `{:error, {:disabled, …}}`
+      and the UI shows a banner.
+    * `{:static_conn, conn}` — test mode with an injected
+      `Tesla.Client` (typically wired up against `Tesla.Mock`). Skips
+      the credential / token plumbing entirely.
+
+  Credentials are managed at runtime through the `/settings` page in
+  the web UI — no files, no env vars, no bind-mounts.
 
   *This module does not retry.* The runner wraps each call in
   `SynologyZipper.Retry.run/3` using `Drive.transient?/1`.
@@ -23,6 +28,7 @@ defmodule SynologyZipper.Uploader do
 
   require Logger
 
+  alias SynologyZipper.State
   alias SynologyZipper.Uploader.{Drive, Job}
 
   @name __MODULE__
@@ -49,7 +55,7 @@ defmodule SynologyZipper.Uploader do
     GenServer.call(server, {:upload, job}, timeout)
   end
 
-  @doc "True when there are no usable credentials."
+  @doc "True when no Drive credentials are currently configured."
   @spec disabled?(GenServer.server()) :: boolean()
   def disabled?(server \\ @name) do
     GenServer.call(server, :disabled?)
@@ -72,81 +78,67 @@ defmodule SynologyZipper.Uploader do
   def init(opts) do
     state =
       case Keyword.get(opts, :conn) do
-        nil -> build_state(opts)
-        conn -> {:ready, :static_conn, conn}
+        nil -> :dynamic
+        conn -> {:static_conn, conn}
       end
-
-    case state do
-      {:ready, _, _} ->
-        Logger.info("drive uploader ready")
-
-      {:disabled, reason} ->
-        Logger.warning("drive uploader disabled", reason: reason)
-    end
 
     {:ok, state}
   end
 
   @impl true
-  def handle_call({:upload, job}, _from, {:ready, :static_conn, conn} = state) do
+  def handle_call({:upload, job}, _from, {:static_conn, conn} = state) do
     {:reply, Drive.upload(conn, job), state}
   end
 
-  def handle_call({:upload, job}, _from, {:ready, :auth, %{creds: creds, scopes: scopes}} = state) do
-    case Goth.Token.fetch(source: {:service_account, creds, scopes: scopes}) do
-      {:ok, %{token: token}} ->
-        conn = GoogleApi.Drive.V3.Connection.new(token)
+  def handle_call({:upload, job}, _from, :dynamic = state) do
+    case build_conn_from_db() do
+      {:ok, conn} ->
         {:reply, Drive.upload(conn, job), state}
 
       {:error, reason} ->
-        {:reply, {:error, {:auth, reason}}, state}
+        {:reply, {:error, reason}, state}
     end
   end
 
-  def handle_call({:upload, _job}, _from, {:disabled, reason} = state) do
-    {:reply, {:error, {:disabled, reason}}, state}
+  def handle_call(:disabled?, _from, {:static_conn, _} = state) do
+    {:reply, false, state}
   end
 
-  def handle_call(:disabled?, _from, {:disabled, _} = state), do: {:reply, true, state}
-  def handle_call(:disabled?, _from, state), do: {:reply, false, state}
+  def handle_call(:disabled?, _from, :dynamic = state) do
+    {:reply, State.get_drive_credentials() == nil, state}
+  end
 
-  def handle_call(:disabled_reason, _from, {:disabled, reason} = state),
-    do: {:reply, reason, state}
+  def handle_call(:disabled_reason, _from, {:static_conn, _} = state) do
+    {:reply, nil, state}
+  end
 
-  def handle_call(:disabled_reason, _from, state), do: {:reply, nil, state}
+  def handle_call(:disabled_reason, _from, :dynamic = state) do
+    reason =
+      case State.get_drive_credentials() do
+        nil -> "No Google Drive credentials have been uploaded yet."
+        _ -> nil
+      end
+
+    {:reply, reason, state}
+  end
 
   # ---------------------------------------------------------------------------
-  # Credentials wiring
+  # Credentials → Tesla.Client
   # ---------------------------------------------------------------------------
 
-  defp build_state(opts) do
-    credentials_path =
-      Keyword.get(opts, :credentials_path) ||
-        System.get_env("GOOGLE_APPLICATION_CREDENTIALS")
-
-    case credentials_path do
+  defp build_conn_from_db do
+    case State.get_drive_credentials() do
       nil ->
-        {:disabled, "GOOGLE_APPLICATION_CREDENTIALS not set"}
+        {:error, {:disabled, "no credentials"}}
 
-      path ->
-        load_service_account(path)
-    end
-  end
+      creds ->
+        case Goth.Token.fetch(source: {:service_account, creds, scopes: @scopes}) do
+          {:ok, %{token: token}} ->
+            {:ok, GoogleApi.Drive.V3.Connection.new(token)}
 
-  defp load_service_account(path) do
-    with {:read, {:ok, body}} <- {:read, Elixir.File.read(path)},
-         {:parse, {:ok, creds}} <- {:parse, Jason.decode(body)},
-         {:validate, %{"client_email" => _}} <- {:validate, creds} do
-      {:ready, :auth, %{creds: creds, scopes: @scopes}}
-    else
-      {:read, {:error, reason}} ->
-        {:disabled, "read credentials #{inspect(path)}: #{inspect(reason)}"}
-
-      {:parse, {:error, reason}} ->
-        {:disabled, "parse credentials JSON: #{inspect(reason)}"}
-
-      {:validate, _} ->
-        {:disabled, "credentials JSON missing client_email"}
+          {:error, reason} ->
+            {:error, {:auth, reason}}
+        end
     end
   end
 end

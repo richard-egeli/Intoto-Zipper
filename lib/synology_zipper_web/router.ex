@@ -34,6 +34,7 @@ defmodule SynologyZipperWeb.Router do
     live "/sources/new", SourceNewLive, :new
     live "/sources/:name", SourceLive, :show
     live "/runs", RunsLive, :index
+    live "/settings", SettingsLive, :index
   end
 
   # Enable LiveDashboard in development

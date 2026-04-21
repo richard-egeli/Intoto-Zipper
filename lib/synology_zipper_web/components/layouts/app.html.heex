@@ -26,6 +26,16 @@
       >
         Runs
       </.link>
+      <.link
+        navigate={~p"/settings"}
+        class={[
+          "rounded-md px-3 py-1.5 text-[13.5px] font-medium",
+          @active_nav == "settings" && "bg-indigo-50 text-blue-600",
+          @active_nav != "settings" && "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+        ]}
+      >
+        Settings
+      </.link>
     </nav>
     <div class="flex items-center gap-3">
       <span
