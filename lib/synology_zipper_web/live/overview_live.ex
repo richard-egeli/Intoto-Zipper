@@ -97,21 +97,12 @@ defmodule SynologyZipperWeb.OverviewLive do
         </div>
       <% else %>
         <div class="-mx-6 overflow-x-auto px-6">
-        <table class="w-full min-w-[860px] border-separate border-spacing-0 text-left text-[13.5px]">
+        <table class="w-full min-w-[640px] border-separate border-spacing-0 text-left text-[13.5px]">
           <thead>
             <tr class="bg-gray-50 text-[11.5px] uppercase tracking-wider text-gray-500">
               <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 font-medium">Name</th>
               <th class="border-b border-gray-200 px-4 py-2.5 font-medium">Path</th>
               <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 font-medium">Start</th>
-              <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 text-right font-medium">
-                Grace
-              </th>
-              <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 font-medium">
-                Post-zip
-              </th>
-              <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 font-medium">
-                Auto-upload
-              </th>
               <th class="whitespace-nowrap border-b border-gray-200 px-4 py-2.5 font-medium">
                 Last zipped
               </th>
@@ -138,15 +129,6 @@ defmodule SynologyZipperWeb.OverviewLive do
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 font-mono text-[12.5px] text-gray-500">
                 {src.start_month}
-              </td>
-              <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 text-right tabular-nums">
-                {src.grace_days}d
-              </td>
-              <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 font-mono text-[12px]">
-                {src.post_zip}
-              </td>
-              <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5">
-                <.upload_flag source={src} />
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 font-mono text-[12.5px] text-gray-500">
                 <%= if src.last_zipped_month == "" do %>
@@ -246,40 +228,4 @@ defmodule SynologyZipperWeb.OverviewLive do
     """
   end
 
-  attr :source, :map, required: true
-
-  defp upload_flag(%{source: src} = assigns) do
-    cond do
-      not src.auto_upload ->
-        ~H"""
-        <span class="text-gray-400">○ off</span>
-        """
-
-      src.zipped_months == 0 ->
-        ~H"""
-        <span class="text-gray-400">—</span>
-        """
-
-      src.uploaded_months == src.zipped_months ->
-        ~H"""
-        <span class="inline-flex items-center gap-1 text-[12.5px] tabular-nums text-emerald-700">
-          {@source.uploaded_months}/{@source.zipped_months}
-        </span>
-        """
-
-      src.failed_uploads > 0 ->
-        ~H"""
-        <span class="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[12.5px] tabular-nums text-amber-800">
-          {@source.uploaded_months}/{@source.zipped_months} · {@source.failed_uploads} failed
-        </span>
-        """
-
-      true ->
-        ~H"""
-        <span class="text-[12.5px] tabular-nums text-gray-400">
-          {@source.uploaded_months}/{@source.zipped_months}
-        </span>
-        """
-    end
-  end
 end
