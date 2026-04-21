@@ -38,11 +38,11 @@ services:
       # in the SSH user's home dir over there. Override with absolute
       # paths via .env or the `NAS_*_DIR` Makefile vars when deploying.
 
-      # SQLite DB — survives container rebuilds.
+      # SQLite DB — survives container rebuilds. Also holds the
+      # uploaded Drive service-account credentials (set via /settings
+      # in the web UI), so back this directory up if Drive uploads
+      # matter.
       - ${DATA_DIR:-./data}:/data
-
-      # Service-account JSON mounted as a single read-only file.
-      - ${SECRETS_DIR:-./secrets}/drive.json:/run/secrets/drive.json:ro
 
       # Synology source folders. Read-only — the app only reads them.
       # Add more entries as you wire up new sources from the UI.
