@@ -1,0 +1,75 @@
+name: Build amd64 image
+
+# Builds a linux/amd64 Docker image on GitHub's native amd64 runner (no
+# emulation, no upstream Elixir/OTP bugs) and pushes it to GitHub
+# Container Registry at ghcr.io/<owner>/synology_zipper.
+#
+# Triggered on push to main/master, and on manual dispatch so you can
+# rebuild without touching code. Tags: `latest` always; the commit SHA
+# for traceability.
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      app_uid:
+        description: "UID baked into the image (match NAS user)"
+        default: "1026"
+        required: true
+      app_gid:
+        description: "GID baked into the image (match NAS group)"
+        default: "100"
+        required: true
+
+concurrency:
+  group: build-amd64
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/synology_zipper
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build + push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            APP_UID=${{ github.event.inputs.app_uid || '1026' }}
+            APP_GID=${{ github.event.inputs.app_gid || '100' }}
