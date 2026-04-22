@@ -8,7 +8,7 @@ defmodule SynologyZipper.StubUploader do
 
   alias SynologyZipper.Uploader.{Job, Result}
 
-  @type response :: {:ok, Result.t()} | {:error, term()}
+  @type response :: {:ok, Result.t()} | {:error, term()} | {:crash, term()}
 
   def start_link(opts \\ []) do
     name = Keyword.fetch!(opts, :name)
@@ -25,11 +25,21 @@ defmodule SynologyZipper.StubUploader do
   end
 
   def upload(name \\ __MODULE__, %Job{} = job) do
-    Agent.get_and_update(name, fn state ->
-      key = {job.source_name, job.month}
-      response = Map.get(state.plan, key, state.default)
-      {response, %{state | calls: [key | state.calls]}}
-    end)
+    response =
+      Agent.get_and_update(name, fn state ->
+        key = {job.source_name, job.month}
+        response = Map.get(state.plan, key, state.default)
+        {response, %{state | calls: [key | state.calls]}}
+      end)
+
+    case response do
+      # Exit the caller — simulates a crash inside the upload path (e.g.
+      # a `GenServer.call` timeout, which is what actually happened in
+      # prod on 2026-04-21). `exit/1` kills the calling process, which
+      # in the runner flow is the async upload Task.
+      {:crash, reason} -> exit(reason)
+      other -> other
+    end
   end
 
   def disabled?(name \\ __MODULE__), do: Agent.get(name, & &1.disabled)

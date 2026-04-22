@@ -20,6 +20,11 @@ defmodule SynologyZipper.Application do
          skip: false},
         {DNSCluster, query: Application.get_env(:synology_zipper, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: SynologyZipper.PubSub},
+        # Supervises async upload Tasks spawned by the Runner. Using a
+        # Task.Supervisor + `async_nolink` is what keeps a crashing
+        # upload (e.g. a timed-out GenServer.call) from tearing down the
+        # whole run via Task.async's bidirectional link.
+        {Task.Supervisor, name: SynologyZipper.UploadTaskSupervisor},
         SynologyZipperWeb.Endpoint
       ] ++ background_workers()
 

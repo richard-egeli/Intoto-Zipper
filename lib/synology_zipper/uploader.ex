@@ -32,7 +32,13 @@ defmodule SynologyZipper.Uploader do
   alias SynologyZipper.Uploader.{Drive, Job}
 
   @name __MODULE__
-  @default_timeout :timer.minutes(15)
+  # `:infinity` because the real bound is the HTTP timeout inside Tesla
+  # / `google_api_drive`, not the BEAM call timeout. Large month zips
+  # (100+ GB on the configured Drive quota) comfortably exceed any
+  # client-side GenServer.call timeout on a residential uplink, and a
+  # caller-side timeout just strands the still-running upload while
+  # killing the async Task. Let the transport decide when to give up.
+  @default_timeout :infinity
   @scopes ["https://www.googleapis.com/auth/drive.file"]
 
   # ---------------------------------------------------------------------------

@@ -209,7 +209,15 @@ defmodule SynologyZipper.Runner do
       drive_folder_id: folder_id
     }
 
-    task = Task.async(fn -> run_async_upload(candidate, uploader) end)
+    # `async_nolink` (not `async`) so a crash inside the upload Task —
+    # e.g. a `GenServer.call` timeout, which exits the caller — does
+    # not propagate through a link and kill the whole Runner. The Task
+    # is monitored; `await_uploads/1` handles the `:exit` path.
+    task =
+      Task.Supervisor.async_nolink(
+        SynologyZipper.UploadTaskSupervisor,
+        fn -> run_async_upload(candidate, uploader) end
+      )
 
     %{
       acc
@@ -244,6 +252,27 @@ defmodule SynologyZipper.Runner do
           candidate.source_name,
           candidate.month,
           "async upload crashed: #{inspect(e)}"
+        )
+
+      :crashed
+  catch
+    # `rescue` only catches Elixir exceptions. A `GenServer.call` that
+    # times out — or anything else that calls `exit/1` — terminates the
+    # process without raising, so we also need a `catch` clause to
+    # record the failure on the month row instead of silently losing it.
+    kind, reason ->
+      Logger.error("async upload task exited",
+        source: candidate.source_name,
+        month: candidate.month,
+        kind: kind,
+        reason: inspect(reason)
+      )
+
+      _ =
+        State.mark_upload_failed(
+          candidate.source_name,
+          candidate.month,
+          "async upload exited (#{kind}): #{inspect(reason)}"
         )
 
       :crashed
