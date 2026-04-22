@@ -426,6 +426,17 @@ defmodule SynologyZipper.Runner do
       drive_folder_id: candidate.drive_folder_id
     }
 
+    # `mark_upload_started` stamps the row with `upload_started_at`
+    # so the UI can render "uploading…" across LiveView reloads and
+    # the Scheduler's boot sweep can recognise mid-upload crashes.
+    # Cleared by `mark_uploaded` / `mark_upload_failed` below.
+    _ =
+      State.mark_upload_started(
+        candidate.source_name,
+        candidate.month,
+        DateTime.utc_now() |> DateTime.truncate(:second)
+      )
+
     broadcast_upload_event(:upload_started, candidate.source_name, candidate.month)
 
     result =

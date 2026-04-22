@@ -30,6 +30,10 @@ defmodule SynologyZipper.State.Month do
     field :uploaded_at, :utc_datetime
     field :upload_error, :string, default: ""
     field :upload_attempts, :integer, default: 0
+    # Set when an upload is dispatched; cleared on success or failure.
+    # Non-null at boot means the runner died mid-upload — the scheduler
+    # sweeps these in `init/1` so they get retried on the next tick.
+    field :upload_started_at, :utc_datetime
 
     belongs_to :source, SynologyZipper.State.Source,
       foreign_key: :source_name,
@@ -60,7 +64,8 @@ defmodule SynologyZipper.State.Month do
       :drive_file_id,
       :uploaded_at,
       :upload_error,
-      :upload_attempts
+      :upload_attempts,
+      :upload_started_at
     ])
     |> validate_required([:source_name, :month, :status, :started_at])
     |> validate_format(:month, ~r/^\d{4}-(0[1-9]|1[0-2])$/, message: "must be YYYY-MM")

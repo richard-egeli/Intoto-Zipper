@@ -469,19 +469,19 @@ defmodule SynologyZipperWeb.SourceLive do
   attr :month, :map, required: true
   attr :uploading, :boolean, default: false
 
-  defp upload_cell(%{uploading: true} = assigns) do
-    ~H"""
-    <span
-      title="uploading to Drive"
-      class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11.5px] font-medium text-amber-700"
-    >
-      <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-600" />
-      uploading…
-    </span>
-    """
-  end
+  defp upload_cell(%{month: m, uploading: uploading} = assigns) do
+    # Durable "in flight" signal: `upload_started_at` is set by the
+    # runner before it dispatches the Drive call and cleared on
+    # success/failure, so it survives a LiveView reload mid-upload.
+    # The `uploading` MapSet flag arrives via a PubSub event the very
+    # moment the Task starts talking to Drive — useful when the user is
+    # already connected and we want to flip the badge without waiting
+    # for the next `{:month_changed, _}`.
+    in_flight? =
+      uploading or
+        match?(%DateTime{}, m.upload_started_at) and
+          (not is_binary(m.drive_file_id) or m.drive_file_id == "")
 
-  defp upload_cell(%{month: m} = assigns) do
     cond do
       is_binary(m.drive_file_id) and m.drive_file_id != "" ->
         tip =
@@ -504,16 +504,40 @@ defmodule SynologyZipperWeb.SourceLive do
         </span>
         """
 
+      in_flight? ->
+        ~H"""
+        <span
+          title="uploading to Drive"
+          class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11.5px] font-medium text-amber-700"
+        >
+          <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-600" />
+          uploading…
+        </span>
+        """
+
       is_binary(m.upload_error) and m.upload_error != "" ->
-        tip = "#{m.upload_error} (attempts: #{m.upload_attempts})"
-        assigns = assign(assigns, :tip, tip)
+        cap = State.max_upload_attempts()
+        stuck? = m.upload_attempts >= cap
+
+        tip =
+          if stuck? do
+            "#{m.upload_error} (#{m.upload_attempts}/#{cap} attempts — reset the month to retry)"
+          else
+            "#{m.upload_error} (attempts: #{m.upload_attempts})"
+          end
+
+        assigns = assign(assigns, tip: tip, stuck?: stuck?)
 
         ~H"""
         <span
           title={@tip}
-          class="inline-block rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11.5px] font-medium text-red-700"
+          class={[
+            "inline-block rounded-full border px-2 py-0.5 text-[11.5px] font-medium",
+            @stuck? && "border-red-300 bg-red-100 text-red-800",
+            !@stuck? && "border-red-200 bg-red-50 text-red-700"
+          ]}
         >
-          failed
+          {if @stuck?, do: "stuck", else: "failed"}
         </span>
         """
 

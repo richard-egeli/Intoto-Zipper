@@ -28,7 +28,7 @@ defmodule SynologyZipper.Scheduler do
 
   require Logger
 
-  alias SynologyZipper.Runner
+  alias SynologyZipper.{Runner, State}
 
   @pubsub SynologyZipper.PubSub
   @name __MODULE__
@@ -73,6 +73,16 @@ defmodule SynologyZipper.Scheduler do
 
     runner = Keyword.get(opts, :runner, Runner)
     run_opts = Keyword.get(opts, :run_opts, [])
+
+    # Boot sweep: if the BEAM died mid-upload, the month row still has
+    # `upload_started_at` set. Nothing is actually in flight anymore,
+    # so clear those flags. The safety-net upload phase will pick the
+    # row up on the next tick; `Drive.upload` handles partial-upload
+    # recovery via orphan adoption (list-before-create + md5 verify).
+    # Opt-out for tests that start their own Scheduler without a Repo.
+    if Keyword.get(opts, :sweep_on_init, true) do
+      :ok = State.clear_stale_upload_starts()
+    end
 
     state = %{
       tick_interval_ms: tick_interval_ms,

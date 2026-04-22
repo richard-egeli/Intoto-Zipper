@@ -75,6 +75,10 @@ defmodule SynologyZipper.IntegrationTest do
         name: sched_name,
         tick_interval_ms: 3_600_000,
         initial_delay_ms: 0,
+        # See scheduler_test.exs for why tests opt out of the boot
+        # sweep — sandbox ownership can't be granted to a process
+        # that doesn't exist yet.
+        sweep_on_init: false,
         run_opts: [
           uploader: {StubUploader, stub_name},
           now: ~U[2025-04-01 00:00:00Z]

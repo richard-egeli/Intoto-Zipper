@@ -207,6 +207,61 @@ defmodule SynologyZipper.StateTest do
       assert m.upload_attempts == 1
       assert m.upload_error == "503 retry"
     end
+
+    test "mark_upload_started stamps upload_started_at and clears old error", %{now: now} do
+      :ok = State.mark_upload_failed("auto", "2024-05", "stale 503")
+      assert State.get_month("auto", "2024-05").upload_error == "stale 503"
+
+      :ok = State.mark_upload_started("auto", "2024-05", now)
+
+      m = State.get_month("auto", "2024-05")
+      assert m.upload_started_at == now
+      assert m.upload_error == ""
+    end
+
+    test "mark_uploaded clears upload_started_at", %{now: now} do
+      :ok = State.mark_upload_started("auto", "2024-05", now)
+      assert State.get_month("auto", "2024-05").upload_started_at == now
+
+      :ok = State.mark_uploaded("auto", "2024-05", "drive-1", now)
+      assert State.get_month("auto", "2024-05").upload_started_at == nil
+    end
+
+    test "mark_upload_failed clears upload_started_at", %{now: now} do
+      :ok = State.mark_upload_started("auto", "2024-05", now)
+      :ok = State.mark_upload_failed("auto", "2024-05", "boom")
+      assert State.get_month("auto", "2024-05").upload_started_at == nil
+    end
+
+    test "clear_stale_upload_starts nulls upload_started_at everywhere and broadcasts", %{now: now} do
+      :ok = State.subscribe_source("auto")
+      :ok = State.mark_upload_started("auto", "2024-05", now)
+      # Drain the :month_changed from mark_upload_started.
+      assert_receive {:month_changed, "auto", "2024-05"}, 200
+
+      assert State.get_month("auto", "2024-05").upload_started_at == now
+
+      :ok = State.clear_stale_upload_starts()
+
+      assert State.get_month("auto", "2024-05").upload_started_at == nil
+      assert_receive {:month_changed, "auto", "2024-05"}, 200
+    end
+
+    test "months_pending_upload stops returning rows at the attempt cap" do
+      cap = State.max_upload_attempts()
+
+      # Bump attempts up to one below cap — still pending.
+      for _ <- 1..(cap - 1), do: :ok = State.mark_upload_failed("auto", "2024-05", "flaky")
+      assert [_] = State.months_pending_upload()
+
+      # One more pushes it to the cap — safety net stops picking it up.
+      :ok = State.mark_upload_failed("auto", "2024-05", "flaky")
+      assert State.months_pending_upload() == []
+
+      m = State.get_month("auto", "2024-05")
+      assert m.upload_attempts == cap
+      assert m.upload_error == "flaky"
+    end
   end
 
   describe "runs" do

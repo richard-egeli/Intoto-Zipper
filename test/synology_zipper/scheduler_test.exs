@@ -76,7 +76,12 @@ defmodule SynologyZipper.SchedulerTest do
         [
           name: name,
           tick_interval_ms: 3_600_000,
-          initial_delay_ms: 0
+          initial_delay_ms: 0,
+          # The sandbox owner can't hand an ownership grant to a
+          # process that doesn't exist yet; the boot sweep lives in
+          # `init/1`, which runs before `start_link` returns. Opt out
+          # here; `clear_stale_upload_starts/0` has its own unit test.
+          sweep_on_init: false
         ],
         opts
       )

@@ -278,6 +278,19 @@ defmodule SynologyZipper.State do
   # Upload queries + mutations
   # ---------------------------------------------------------------------------
 
+  # Per-row upload retry cap before the safety-net stops picking a row
+  # up automatically. Transient failures retry 3× inside a single
+  # `Retry.run` attempt, so this cap bites after ~N full ticks' worth
+  # of real failures — enough to recover from a flaky network window,
+  # not so many that a permanent error (e.g. `md5_mismatch`,
+  # `ambiguous_orphan`) keeps burning a Drive API budget every hour
+  # forever. Hitting the cap requires operator action: reset the month
+  # (wipes the row), or clear `upload_attempts` manually.
+  @max_upload_attempts 5
+
+  @doc "Cap after which `months_pending_upload/0` stops auto-retrying a row."
+  def max_upload_attempts, do: @max_upload_attempts
+
   @doc """
   Returns month rows eligible for Drive upload:
 
@@ -285,10 +298,13 @@ defmodule SynologyZipper.State do
     * status='zipped' on the month
     * drive_file_id='' (not yet uploaded)
     * zip_path not null/empty (there is a real file)
+    * upload_attempts < @max_upload_attempts (circuit-breaker)
 
   Each row is `%{source_name, month, zip_path, drive_folder_id}`.
   """
   def months_pending_upload do
+    max = @max_upload_attempts
+
     from(m in Month,
       join: s in Source,
       on: s.name == m.source_name,
@@ -297,7 +313,8 @@ defmodule SynologyZipper.State do
           m.status == "zipped" and
           m.drive_file_id == "" and
           not is_nil(m.zip_path) and
-          m.zip_path != "",
+          m.zip_path != "" and
+          m.upload_attempts < ^max,
       order_by: [asc: m.source_name, asc: m.month],
       select: %{
         source_name: m.source_name,
@@ -307,6 +324,58 @@ defmodule SynologyZipper.State do
       }
     )
     |> Repo.all()
+  end
+
+  @doc """
+  Marks a month's upload as "in flight": stamps `upload_started_at`
+  with `at` and clears any previous `upload_error`. Called by the
+  runner just before dispatching the Drive request so the UI can tell
+  "uploading now" from "pending" across reloads, and so the scheduler's
+  boot sweep can recognise crashed-mid-upload rows.
+  """
+  def mark_upload_started(source_name, month, at) do
+    case get_month(source_name, month) do
+      nil ->
+        {:error, :not_found}
+
+      row ->
+        {:ok, _} =
+          row
+          |> Ecto.Changeset.change(%{
+            upload_started_at: at,
+            upload_error: ""
+          })
+          |> Repo.update()
+
+        broadcast_month_changed(source_name, month)
+        :ok
+    end
+  end
+
+  @doc """
+  Clears `upload_started_at` on every row. Called from the Scheduler's
+  `init/1` so any upload that was in flight when the BEAM died gets
+  treated as "pending" again — the safety-net phase will re-dispatch
+  it on the next tick, and `Drive.upload` handles partial-upload
+  recovery via orphan adoption. Broadcasts `:month_changed` per row
+  touched so open LiveView sessions refresh their badges.
+  """
+  def clear_stale_upload_starts do
+    rows =
+      from(m in Month, where: not is_nil(m.upload_started_at), select: {m.source_name, m.month})
+      |> Repo.all()
+
+    case rows do
+      [] ->
+        :ok
+
+      _ ->
+        from(m in Month, where: not is_nil(m.upload_started_at))
+        |> Repo.update_all(set: [upload_started_at: nil])
+
+        Enum.each(rows, fn {src, month} -> broadcast_month_changed(src, month) end)
+        :ok
+    end
   end
 
   @doc "Records a successful upload; increments `upload_attempts`, clears error."
@@ -322,7 +391,8 @@ defmodule SynologyZipper.State do
             drive_file_id: file_id,
             uploaded_at: at,
             upload_error: "",
-            upload_attempts: row.upload_attempts + 1
+            upload_attempts: row.upload_attempts + 1,
+            upload_started_at: nil
           })
           |> Repo.update()
 
@@ -333,7 +403,7 @@ defmodule SynologyZipper.State do
 
   @doc """
   Records a failed upload. Leaves `drive_file_id=''` so the next tick
-  retries the month.
+  retries the month (subject to the `@max_upload_attempts` cap).
   """
   def mark_upload_failed(source_name, month, err_msg) do
     case get_month(source_name, month) do
@@ -346,7 +416,8 @@ defmodule SynologyZipper.State do
           |> Ecto.Changeset.change(%{
             drive_file_id: "",
             upload_error: err_msg,
-            upload_attempts: row.upload_attempts + 1
+            upload_attempts: row.upload_attempts + 1,
+            upload_started_at: nil
           })
           |> Repo.update()
 
