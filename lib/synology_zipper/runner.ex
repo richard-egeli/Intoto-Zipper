@@ -262,22 +262,62 @@ defmodule SynologyZipper.Runner do
     # process without raising, so we also need a `catch` clause to
     # record the failure on the month row instead of silently losing it.
     kind, reason ->
+      classified = classify_exit_reason(kind, reason)
+
       Logger.error("async upload task exited",
         source: candidate.source_name,
         month: candidate.month,
         kind: kind,
-        reason: inspect(reason)
+        reason: inspect(reason),
+        classified: classified
       )
 
       _ =
         State.mark_upload_failed(
           candidate.source_name,
           candidate.month,
-          "async upload exited (#{kind}): #{inspect(reason)}"
+          classified
         )
 
       :crashed
   end
+
+  # Turns `kind, reason` from the `catch` clause into a one-line string
+  # the dashboard can render without the operator needing to squint at
+  # a raw `inspect/1` tuple. The patterns mirror what actually shows up
+  # in prod — GenServer.call timeouts, dead-process sends, and brutal
+  # kills from the Task supervisor — and fall through to a generic
+  # `{kind}: {reason}` for anything we haven't classified yet.
+  @spec classify_exit_reason(atom(), term()) :: String.t()
+  defp classify_exit_reason(:exit, {:timeout, {GenServer, :call, [server, msg, timeout]}}) do
+    "GenServer.call to #{format_server(server)} timed out after #{timeout}ms (#{inspect(msg)})"
+  end
+
+  defp classify_exit_reason(:exit, {:noproc, {GenServer, :call, [server, _, _]}}) do
+    "GenServer #{format_server(server)} was not running when called"
+  end
+
+  defp classify_exit_reason(:exit, {:upload_crashed, reason}) do
+    "uploader task crashed: #{inspect(reason)}"
+  end
+
+  defp classify_exit_reason(:exit, :killed) do
+    "upload task killed (supervisor brutal-kill or OS signal)"
+  end
+
+  defp classify_exit_reason(:exit, :normal), do: "upload task exited normally without a result"
+  defp classify_exit_reason(:exit, :shutdown), do: "upload task shut down"
+  defp classify_exit_reason(:exit, {:shutdown, reason}), do: "upload task shut down: #{inspect(reason)}"
+
+  defp classify_exit_reason(:exit, reason), do: "async task exited: #{inspect(reason)}"
+  defp classify_exit_reason(:throw, value), do: "async task threw: #{inspect(value)}"
+  defp classify_exit_reason(kind, reason), do: "async task #{kind}: #{inspect(reason)}"
+
+  defp format_server(pid) when is_pid(pid), do: inspect(pid)
+  defp format_server(name) when is_atom(name), do: inspect(name)
+  defp format_server({:global, name}), do: "global:#{inspect(name)}"
+  defp format_server({name, node}) when is_atom(name) and is_atom(node), do: "#{inspect(name)}@#{node}"
+  defp format_server(other), do: inspect(other)
 
   defp await_uploads([]), do: :ok
 

@@ -157,4 +157,45 @@ defmodule SynologyZipper.ZipperTest do
       refute File.exists?(Path.join(root, ".2026-03.zip.tmp"))
     end
   end
+
+  describe "sweep_orphan_tmp_zips/1" do
+    test "removes only .<YYYY-MM>.zip.tmp files, leaves anything else alone" do
+      root = tmp_dir!("sweep")
+
+      # Orphan tmps left over from a crashed zip phase.
+      File.write!(Path.join(root, ".2025-08.zip.tmp"), "partial")
+      File.write!(Path.join(root, ".2026-01.zip.tmp"), "partial")
+
+      # Stuff we MUST not touch.
+      File.write!(Path.join(root, "2026-01.zip"), "final")
+      File.write!(Path.join(root, ".other.tmp"), "unrelated")
+      File.write!(Path.join(root, "2025-08.zip.tmp"), "no-leading-dot")
+      File.write!(Path.join(root, ".2025-8.zip.tmp"), "one-digit-month")
+      File.mkdir_p!(Path.join(root, "2026-02-01"))
+
+      assert {2, 0} = Zipper.sweep_orphan_tmp_zips([root])
+
+      refute File.exists?(Path.join(root, ".2025-08.zip.tmp"))
+      refute File.exists?(Path.join(root, ".2026-01.zip.tmp"))
+
+      assert File.exists?(Path.join(root, "2026-01.zip"))
+      assert File.exists?(Path.join(root, ".other.tmp"))
+      assert File.exists?(Path.join(root, "2025-08.zip.tmp"))
+      assert File.exists?(Path.join(root, ".2025-8.zip.tmp"))
+      assert File.dir?(Path.join(root, "2026-02-01"))
+    end
+
+    test "tolerates missing and unreadable source paths" do
+      existing = tmp_dir!("sweep_multi")
+      File.write!(Path.join(existing, ".2025-09.zip.tmp"), "partial")
+      missing = Path.join(existing, "does-not-exist")
+
+      assert {1, 0} = Zipper.sweep_orphan_tmp_zips([existing, missing])
+      refute File.exists?(Path.join(existing, ".2025-09.zip.tmp"))
+    end
+
+    test "no-op on an empty path list" do
+      assert {0, 0} = Zipper.sweep_orphan_tmp_zips([])
+    end
+  end
 end

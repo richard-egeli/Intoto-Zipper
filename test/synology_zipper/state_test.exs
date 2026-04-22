@@ -419,6 +419,8 @@ defmodule SynologyZipper.StateTest do
 
       {:ok, _} = State.start_month_attempt("auto", "2024-06", now)
       {:ok, _} = State.mark_zipped("auto", "2024-06", now, "/z2.zip", 1, 1)
+      # A single transient failure is NOT "stuck" — it will be retried
+      # by the safety-net next tick and shouldn't pollute the KPI.
       :ok = State.mark_upload_failed("auto", "2024-06", "network")
 
       {:ok, _} = State.start_month_attempt("auto", "2024-07", now)
@@ -429,7 +431,36 @@ defmodule SynologyZipper.StateTest do
       assert row.last_zipped_month == "2024-06"
       assert row.zipped_months == 2
       assert row.uploaded_months == 1
-      assert row.failed_uploads == 1
+      # 2024-06 has one failed upload but is still under the cap →
+      # not counted as stuck.
+      assert row.stuck_uploads == 0
+    end
+
+    test "stuck_uploads counts rows past the retry cap" do
+      {:ok, _} =
+        State.upsert_source(%{
+          name: "auto",
+          path: "/p",
+          start_month: "2024-01",
+          auto_upload: true,
+          drive_folder_id: "fid"
+        })
+
+      now = ~U[2024-06-01 00:00:00Z]
+      cap = State.max_upload_attempts()
+
+      {:ok, _} = State.start_month_attempt("auto", "2024-05", now)
+      {:ok, _} = State.mark_zipped("auto", "2024-05", now, "/z.zip", 1, 1)
+      # Push one row past the cap.
+      for _ <- 1..cap, do: :ok = State.mark_upload_failed("auto", "2024-05", "permanent")
+
+      # A second row with one failure — not stuck.
+      {:ok, _} = State.start_month_attempt("auto", "2024-06", now)
+      {:ok, _} = State.mark_zipped("auto", "2024-06", now, "/z2.zip", 1, 1)
+      :ok = State.mark_upload_failed("auto", "2024-06", "flake")
+
+      [row] = State.list_sources_with_stats()
+      assert row.stuck_uploads == 1
     end
   end
 

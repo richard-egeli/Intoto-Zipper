@@ -199,6 +199,42 @@ defmodule SynologyZipper.RunnerTest do
     assert mar.upload_error == ""
   end
 
+  test "GenServer.call timeout exits are classified into a readable upload_error" do
+    # Reproduces the shape that originally surfaced this whole series:
+    # `exit({:timeout, {GenServer, :call, [server, msg, timeout]}})`.
+    # The catch clause in `run_async_upload` should record a one-line
+    # string mentioning the server, the message, and the timeout — not
+    # a raw `inspect/1` tuple.
+    source_path = tmp_dir!("src_gs_timeout")
+    write_file!(Path.join([source_path, "2026-03-10", "a.mp4"]), "aaa")
+
+    {:ok, _} =
+      State.upsert_source(%{
+        name: "cams",
+        path: source_path,
+        start_month: "2026-03",
+        grace_days: 3,
+        auto_upload: true,
+        drive_folder_id: "folder-x"
+      })
+
+    gs_exit = {:timeout, {GenServer, :call, [SynologyZipper.Uploader, :disabled?, 5000]}}
+    plan = %{{"cams", "2026-03"} => {:crash, gs_exit}}
+    stub = start_stub!(disabled: false, plan: plan, default: {:error, :unused})
+
+    _ = Runner.run(now: ~U[2026-04-04 00:00:00Z], uploader: stub)
+
+    mar = State.get_month("cams", "2026-03")
+    assert mar.status == "zipped"
+    assert mar.drive_file_id == ""
+    assert mar.upload_error =~ "GenServer.call"
+    assert mar.upload_error =~ "5000ms"
+    assert mar.upload_error =~ "SynologyZipper.Uploader"
+    assert mar.upload_error =~ "disabled?"
+    # Sanity: no raw tuple dump.
+    refute mar.upload_error =~ "{:timeout, {GenServer"
+  end
+
   test "source files are always kept after zipping" do
     source_path = tmp_dir!("src5")
     write_file!(Path.join([source_path, "2026-03-01", "a.mp4"]), "aaa")

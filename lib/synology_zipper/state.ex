@@ -476,7 +476,7 @@ defmodule SynologyZipper.State do
     * `:last_run_status`   — latest month's status or ""
     * `:zipped_months`     — count of zipped months
     * `:uploaded_months`   — count with drive_file_id<>''
-    * `:failed_uploads`    — count of zipped-but-errored uploads
+    * `:stuck_uploads`     — count past the retry cap and still pending
 
   Returned as a plain map per row, not an Ecto struct.
   """
@@ -491,7 +491,7 @@ defmodule SynologyZipper.State do
         last_run_status: last_run_status(s.name),
         zipped_months: count_months(s.name, status: "zipped"),
         uploaded_months: count_months(s.name, uploaded: true),
-        failed_uploads: count_failed_uploads(s.name)
+        stuck_uploads: count_stuck_uploads(s.name)
       })
     end)
   end
@@ -536,12 +536,22 @@ defmodule SynologyZipper.State do
     )
   end
 
-  defp count_failed_uploads(source_name) do
+  # "Stuck" = past the retry cap and still not uploaded. Rows that
+  # merely had a transient failure mid-run (and will be retried by the
+  # safety-net on the next tick) are *not* counted here — they're
+  # noisy on the KPI and don't require operator attention. Once a row
+  # hits `@max_upload_attempts` it stops getting auto-retried by
+  # `months_pending_upload/0`, so this count matches exactly the set
+  # of months the operator needs to do something about (reset, fix
+  # credentials, investigate Drive-side orphan, etc).
+  defp count_stuck_uploads(source_name) do
+    cap = @max_upload_attempts
+
     Repo.one(
       from m in Month,
         where:
           m.source_name == ^source_name and m.status == "zipped" and
-            m.drive_file_id == "" and m.upload_error != "",
+            m.drive_file_id == "" and m.upload_attempts >= ^cap,
         select: count(m.month)
     )
   end

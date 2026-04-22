@@ -156,6 +156,47 @@ defmodule SynologyZipper.Zipper do
   defp expand_year(y), do: y
 
   # ---------------------------------------------------------------------------
+  # Orphan tmp cleanup
+  # ---------------------------------------------------------------------------
+
+  # Matches the temp pattern written by `write_nonempty_zip/4`:
+  # `.<YYYY-MM>.zip.tmp`. Tight enough to avoid nuking something
+  # unrelated a user might have dropped in the source dir.
+  @orphan_tmp_re ~r/^\.\d{4}-\d{2}\.zip\.tmp$/
+
+  @doc """
+  Deletes any orphan `.<YYYY-MM>.zip.tmp` files under the given source
+  paths. Called from `Scheduler.init/1` on boot so a BEAM crash mid-zip
+  doesn't leave partial temp files to accumulate across restarts.
+
+  Returns `{removed, errors}` — counts, for logging. Missing or
+  unreadable paths are ignored (a source may point at a mounted volume
+  that isn't available yet at boot; the next zip attempt will surface
+  the real error via `collect_files/2`).
+  """
+  @spec sweep_orphan_tmp_zips([String.t()]) :: {non_neg_integer(), non_neg_integer()}
+  def sweep_orphan_tmp_zips(paths) when is_list(paths) do
+    Enum.reduce(paths, {0, 0}, fn path, {removed, errors} ->
+      case File.ls(path) do
+        {:ok, entries} ->
+          Enum.reduce(entries, {removed, errors}, fn name, {r, e} ->
+            if Regex.match?(@orphan_tmp_re, name) do
+              case File.rm(Path.join(path, name)) do
+                :ok -> {r + 1, e}
+                {:error, _} -> {r, e + 1}
+              end
+            else
+              {r, e}
+            end
+          end)
+
+        {:error, _} ->
+          {removed, errors}
+      end
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
   # Write
   # ---------------------------------------------------------------------------
 

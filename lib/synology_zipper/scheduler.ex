@@ -28,7 +28,7 @@ defmodule SynologyZipper.Scheduler do
 
   require Logger
 
-  alias SynologyZipper.{Runner, State}
+  alias SynologyZipper.{Runner, State, Zipper}
 
   @pubsub SynologyZipper.PubSub
   @name __MODULE__
@@ -74,14 +74,25 @@ defmodule SynologyZipper.Scheduler do
     runner = Keyword.get(opts, :runner, Runner)
     run_opts = Keyword.get(opts, :run_opts, [])
 
-    # Boot sweep: if the BEAM died mid-upload, the month row still has
-    # `upload_started_at` set. Nothing is actually in flight anymore,
-    # so clear those flags. The safety-net upload phase will pick the
-    # row up on the next tick; `Drive.upload` handles partial-upload
-    # recovery via orphan adoption (list-before-create + md5 verify).
-    # Opt-out for tests that start their own Scheduler without a Repo.
+    # Boot sweep (opt-out for tests that can't grant sandbox ownership
+    # to a process that doesn't exist yet):
+    #   1. Null `upload_started_at` on any row still carrying it —
+    #      nothing can actually be in flight at boot. The safety-net
+    #      will re-dispatch on the next tick; `Drive.upload`'s orphan
+    #      adoption handles partial-upload recovery.
+    #   2. Delete orphan `.<YYYY-MM>.zip.tmp` files under every
+    #      configured source path. A BEAM crash mid-zip leaves these
+    #      behind; they accumulate over restarts if nothing cleans up.
     if Keyword.get(opts, :sweep_on_init, true) do
       :ok = State.clear_stale_upload_starts()
+
+      paths = State.list_sources() |> Enum.map(& &1.path)
+
+      case Zipper.sweep_orphan_tmp_zips(paths) do
+        {0, 0} -> :ok
+        {removed, 0} -> Logger.info("boot sweep", orphan_tmp_removed: removed)
+        {removed, errors} -> Logger.warning("boot sweep", orphan_tmp_removed: removed, errors: errors)
+      end
     end
 
     state = %{
