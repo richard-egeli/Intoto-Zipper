@@ -147,6 +147,7 @@ defmodule SynologyZipper.Runner do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     {:ok, _} = State.start_month_attempt(source.name, month, now)
 
+    broadcast_zip_event(:zip_started, source.name, month)
     watcher = start_progress_watcher(source.name, source.path, month)
 
     try_result =
@@ -154,6 +155,7 @@ defmodule SynologyZipper.Runner do
         Zipper.write_zip(source.path, month)
       after
         stop_progress_watcher(watcher)
+        broadcast_zip_event(:zip_finished, source.name, month)
       end
 
     case try_result do
@@ -521,6 +523,17 @@ defmodule SynologyZipper.Runner do
   # row's upload cell to an "uploading…" badge while the Task is
   # actually talking to Drive (as opposed to just queued).
   defp broadcast_upload_event(event, source_name, month) do
+    Phoenix.PubSub.broadcast(
+      SynologyZipper.PubSub,
+      State.source_topic(source_name),
+      {event, source_name, month}
+    )
+  end
+
+  # Symmetric with `broadcast_upload_event/3` but for the zip phase,
+  # so the Overview page can display a "currently zipping" tile
+  # without having to poll State.
+  defp broadcast_zip_event(event, source_name, month) do
     Phoenix.PubSub.broadcast(
       SynologyZipper.PubSub,
       State.source_topic(source_name),

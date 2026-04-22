@@ -50,6 +50,7 @@ defmodule SynologyZipperWeb.SourceLive do
          |> assign(:auto_upload_checked, source.auto_upload)
          |> assign(:progress, %{})
          |> assign(:uploading, MapSet.new())
+         |> assign(:upload_progress, %{})
          |> assign(:months, State.list_months(name))}
     end
   end
@@ -171,7 +172,24 @@ defmodule SynologyZipperWeb.SourceLive do
   end
 
   def handle_info({:upload_finished, name, month}, %{assigns: %{original_name: name}} = socket) do
-    {:noreply, assign(socket, :uploading, MapSet.delete(socket.assigns.uploading, month))}
+    progress = Map.delete(socket.assigns.upload_progress, month)
+
+    {:noreply,
+     socket
+     |> assign(:uploading, MapSet.delete(socket.assigns.uploading, month))
+     |> assign(:upload_progress, progress)}
+  end
+
+  def handle_info(
+        {:upload_progress, name, month, bytes, total},
+        %{assigns: %{original_name: name}} = socket
+      ) do
+    pct = if total > 0, do: min(div(bytes * 100, total), 100), else: 0
+
+    entry = %{bytes: bytes, total: total, pct: pct}
+
+    {:noreply,
+     assign(socket, :upload_progress, Map.put(socket.assigns.upload_progress, month, entry))}
   end
 
   # Runner cleared the progress map when the run ended, but we also
@@ -181,7 +199,8 @@ defmodule SynologyZipperWeb.SourceLive do
     {:noreply,
      socket
      |> assign(:progress, %{})
-     |> assign(:uploading, MapSet.new())}
+     |> assign(:uploading, MapSet.new())
+     |> assign(:upload_progress, %{})}
   end
 
   # {:run_*, ...} handled by the shared hook.
@@ -387,7 +406,11 @@ defmodule SynologyZipperWeb.SourceLive do
                 {m.error}
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5">
-                <.upload_cell month={m} uploading={MapSet.member?(@uploading, m.month)} />
+                <.upload_cell
+                  month={m}
+                  uploading={MapSet.member?(@uploading, m.month)}
+                  upload_progress={Map.get(@upload_progress, m.month)}
+                />
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5 text-right">
                 <button
@@ -466,8 +489,27 @@ defmodule SynologyZipperWeb.SourceLive do
   defp display_status(%{status: "failed", finished_at: nil}, true), do: "running"
   defp display_status(%{status: s}, _), do: s
 
+  # Picks the richer of two progress sources when both exist: a live
+  # `:upload_progress` PubSub snapshot beats an inferred zero-pct tile
+  # derived from `zip_bytes` alone. Returns nil when we have neither
+  # (show the plain "uploading…" badge).
+  defp upload_progress_for_display(%{upload_progress: %{} = p}) when map_size(p) > 0, do: p
+
+  defp upload_progress_for_display(%{month: %{zip_bytes: total}}) when is_integer(total) and total > 0 do
+    %{bytes: 0, total: total, pct: 0}
+  end
+
+  defp upload_progress_for_display(_), do: nil
+
+  defp upload_progress_tooltip(nil), do: "uploading to Drive"
+
+  defp upload_progress_tooltip(%{bytes: bytes, total: total, pct: pct}) do
+    "#{pct}% — #{Helpers.human_bytes(bytes)} of #{Helpers.human_bytes(total)} sent"
+  end
+
   attr :month, :map, required: true
   attr :uploading, :boolean, default: false
+  attr :upload_progress, :map, default: nil
 
   defp upload_cell(%{month: m, uploading: uploading} = assigns) do
     # Durable "in flight" signal: `upload_started_at` is set by the
@@ -505,14 +547,25 @@ defmodule SynologyZipperWeb.SourceLive do
         """
 
       in_flight? ->
+        assigns = assign(assigns, :progress, upload_progress_for_display(assigns))
+
         ~H"""
-        <span
-          title="uploading to Drive"
-          class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11.5px] font-medium text-amber-700"
-        >
-          <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-600" />
-          uploading…
-        </span>
+        <div class="inline-flex flex-col items-start gap-0.5">
+          <span
+            title={upload_progress_tooltip(@progress)}
+            class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11.5px] font-medium text-amber-700"
+          >
+            <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-600" />
+            <%= if @progress do %>
+              uploading {@progress.pct}%
+            <% else %>
+              uploading…
+            <% end %>
+          </span>
+          <span :if={@progress} class="font-mono text-[11px] tabular-nums text-amber-700/80">
+            {Helpers.human_bytes(@progress.bytes)} / {Helpers.human_bytes(@progress.total)}
+          </span>
+        </div>
         """
 
       is_binary(m.upload_error) and m.upload_error != "" ->

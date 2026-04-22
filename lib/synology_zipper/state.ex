@@ -353,6 +353,25 @@ defmodule SynologyZipper.State do
   end
 
   @doc """
+  The month row currently claiming an in-flight upload, if any. The
+  Uploader is a single-worker queue so at most one row has
+  `upload_started_at` set at a time; `limit: 1` is cheap insurance
+  against transient states where a just-finished and just-started row
+  briefly coexist. Returns `%{source_name, month, zip_bytes}` or nil.
+  Used by the Overview LiveView on mount to rehydrate the "currently
+  uploading" tile across page reloads.
+  """
+  def active_upload do
+    from(m in Month,
+      where: not is_nil(m.upload_started_at) and m.drive_file_id == "",
+      order_by: [desc: m.upload_started_at],
+      limit: 1,
+      select: %{source_name: m.source_name, month: m.month, zip_bytes: m.zip_bytes}
+    )
+    |> Repo.one()
+  end
+
+  @doc """
   Clears `upload_started_at` on every row. Called from the Scheduler's
   `init/1` so any upload that was in flight when the BEAM died gets
   treated as "pending" again — the safety-net phase will re-dispatch
