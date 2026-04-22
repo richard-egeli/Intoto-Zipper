@@ -179,7 +179,21 @@ defmodule SynologyZipper.Uploader do
   # the SQL-sandbox grant intact in tests (the Task would otherwise
   # need its own `Sandbox.allow` call, which we can't issue ahead of
   # time for a not-yet-spawned pid).
+  #
+  # This is also the moment we stamp `upload_started_at` and broadcast
+  # `:upload_started` — NOT at the point the runner enqueues, because
+  # then every fan-out task would flash "uploading…" in the UI even
+  # though they're really parked in our `:queue` waiting their turn.
   defp dispatch(job, from, %{mode: mode} = state) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    _ = State.mark_upload_started(job.source_name, job.month, now)
+
+    Phoenix.PubSub.broadcast(
+      SynologyZipper.PubSub,
+      State.source_topic(job.source_name),
+      {:upload_started, job.source_name, job.month}
+    )
+
     conn_result = build_conn(mode)
 
     task =

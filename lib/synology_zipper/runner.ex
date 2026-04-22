@@ -466,19 +466,15 @@ defmodule SynologyZipper.Runner do
       drive_folder_id: candidate.drive_folder_id
     }
 
-    # `mark_upload_started` stamps the row with `upload_started_at`
-    # so the UI can render "uploading…" across LiveView reloads and
-    # the Scheduler's boot sweep can recognise mid-upload crashes.
-    # Cleared by `mark_uploaded` / `mark_upload_failed` below.
-    _ =
-      State.mark_upload_started(
-        candidate.source_name,
-        candidate.month,
-        DateTime.utc_now() |> DateTime.truncate(:second)
-      )
-
-    broadcast_upload_event(:upload_started, candidate.source_name, candidate.month)
-
+    # `upload_started_at` + `:upload_started` PubSub are stamped by the
+    # Uploader itself the moment it actually dispatches the Drive call
+    # — see `Uploader.dispatch/3`. If we stamped them here, every task
+    # fanned out by the zip phase would instantly show "uploading…" in
+    # the UI even though only one can actually be running (the Uploader
+    # is a single-worker queue). `:upload_finished` still fires here
+    # because `Retry.run` may loop over several Uploader dispatches;
+    # one "finished" when the runner is done with this month is the
+    # clean signal to drop it from the UI's in-flight MapSet.
     result =
       try do
         Retry.run(
