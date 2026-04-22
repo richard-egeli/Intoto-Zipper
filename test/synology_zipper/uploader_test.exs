@@ -105,6 +105,133 @@ defmodule SynologyZipper.UploaderTest do
     end
   end
 
+  describe "concurrent probes during an in-flight upload" do
+    # Regression: the GenServer used to run `Drive.upload/2` inline
+    # inside `handle_call`, holding the mailbox for the full upload
+    # duration (hours in prod). Post-rework, the call spawns a Task and
+    # returns `:noreply`; `disabled?` / `disabled_reason` handlers reply
+    # immediately regardless of whether an upload is in flight.
+    test "disabled? returns without waiting for an active upload" do
+      body = "hello"
+      {path, md5} = tmp_zip!(body)
+
+      parent = self()
+
+      Tesla.Mock.mock(fn
+        %{method: :get, url: "https://www.googleapis.com/drive/v3/files"} ->
+          %Tesla.Env{
+            status: 200,
+            body: Jason.encode!(%{"files" => []})
+          }
+
+        %{method: :post, url: "https://www.googleapis.com/upload/drive/v3/files"} ->
+          # Tell the test we're in and block until explicitly released.
+          send(parent, {:upload_entered, self()})
+
+          receive do
+            :release ->
+              %Tesla.Env{
+                status: 200,
+                body:
+                  Jason.encode!(%{
+                    "id" => "FILE_OK",
+                    "md5Checksum" => md5,
+                    "size" => "#{byte_size(body)}"
+                  })
+              }
+          after
+            5_000 -> %Tesla.Env{status: 500, body: ""}
+          end
+      end)
+
+      conn = DriveConn.new("fake-token")
+      server = start_uploader!(conn: conn)
+
+      job = %Job{
+        source_name: "cam",
+        month: "2026-03",
+        zip_path: path,
+        drive_folder_id: "F"
+      }
+
+      upload_task = Task.async(fn -> Uploader.upload(server, job) end)
+
+      # Wait until the Uploader has dispatched the work and the mock is
+      # actually blocked mid-upload.
+      assert_receive {:upload_entered, mock_pid}, 1_000
+
+      # The upload is genuinely in flight; `disabled?` must still return
+      # immediately. Budget 200ms — plenty for a synchronous reply from a
+      # local GenServer, far below anything that would mask a regression.
+      start = System.monotonic_time(:millisecond)
+      refute Uploader.disabled?(server)
+      assert Uploader.disabled_reason(server) == nil
+      elapsed = System.monotonic_time(:millisecond) - start
+
+      assert elapsed < 200,
+             "probes should be non-blocking during an upload; took #{elapsed}ms"
+
+      # Release the upload and confirm the original call still returns
+      # the real result — the rework must not drop replies.
+      send(mock_pid, :release)
+      assert {:ok, %{drive_file_id: "FILE_OK"}} = Task.await(upload_task, 2_000)
+    end
+
+    test "second upload can be submitted while first is in flight" do
+      # The single-worker serialization is still a semantic goal — two
+      # uploads to Drive should not run in parallel. What we don't want
+      # is the SECOND `GenServer.call` to block the test's own mailbox
+      # for the duration of the first upload.
+      body = "hello"
+      {path, md5} = tmp_zip!(body)
+      parent = self()
+
+      Tesla.Mock.mock(fn
+        %{method: :get, url: "https://www.googleapis.com/drive/v3/files"} ->
+          %Tesla.Env{status: 200, body: Jason.encode!(%{"files" => []})}
+
+        %{method: :post, url: "https://www.googleapis.com/upload/drive/v3/files"} ->
+          send(parent, {:mock_hit, self()})
+
+          receive do
+            :release ->
+              %Tesla.Env{
+                status: 200,
+                body:
+                  Jason.encode!(%{
+                    "id" => "FILE",
+                    "md5Checksum" => md5,
+                    "size" => "#{byte_size(body)}"
+                  })
+              }
+          after
+            5_000 -> %Tesla.Env{status: 500, body: ""}
+          end
+      end)
+
+      conn = DriveConn.new("fake-token")
+      server = start_uploader!(conn: conn)
+      job = %Job{source_name: "cam", month: "2026-01", zip_path: path, drive_folder_id: "F"}
+
+      first = Task.async(fn -> Uploader.upload(server, job) end)
+      assert_receive {:mock_hit, first_mock_pid}, 1_000
+
+      # Second call: submitting it must not wait for the first's upload.
+      second =
+        Task.async(fn ->
+          Uploader.upload(server, %{job | month: "2026-02"})
+        end)
+
+      # Release the first — second should then run through the mock.
+      send(first_mock_pid, :release)
+      assert_receive {:mock_hit, second_mock_pid}, 2_000
+      send(second_mock_pid, :release)
+
+      assert {:ok, %{drive_file_id: "FILE"}} = Task.await(first, 2_000)
+      assert {:ok, %{drive_file_id: "FILE"}} = Task.await(second, 2_000)
+    end
+  end
+
   describe "concurrent-call timeout behaviour" do
     # Regression: `disabled?` and `disabled_reason` previously used the
     # default 5_000ms `GenServer.call` timeout. Because every public call
