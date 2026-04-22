@@ -213,9 +213,19 @@ defmodule SynologyZipper.Uploader.Drive do
   def transient?({:orphan_md5_mismatch, _}), do: false
   def transient?({:ambiguous_orphan, _}), do: false
   def transient?({:local_zip_missing, _}), do: false
+  def transient?({:local_zip_read, _, _}), do: false
   def transient?(:disabled), do: false
+  # `Uploader.build_conn_from_db/0` returns `{:error, {:disabled, _}}`
+  # and `{:error, {:auth, _}}` — both permanent from the runner's POV:
+  # credentials need to be re-uploaded / service-account needs fixing
+  # before a retry could succeed.
+  def transient?({:disabled, _}), do: false
+  def transient?({:auth, _}), do: false
   # Unknown transport hiccup — safe to retry.
   def transient?({:transport, _}), do: true
+  # Unknown error shape. Default to non-transient so a newly introduced
+  # error doesn't silently turn into 3× retries; if a future reason is
+  # genuinely retryable, add an explicit clause above.
   def transient?(_), do: false
 
   # ---------------------------------------------------------------------------

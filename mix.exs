@@ -60,8 +60,10 @@ defmodule SynologyZipper.MixProject do
       {:google_api_drive, "~> 0.32"},
       # Service-account token fetcher for :google_api_drive.
       {:goth, "~> 1.4"},
-      # Swap Tesla's default Hackney adapter for Finch to match the rest of
-      # the Phoenix HTTP stack (keeps deps lean).
+      # Tesla's HTTP adapter for every google_api_drive / Goth call.
+      # Wired up in `config/config.exs` + supervised in
+      # `SynologyZipper.Application` so uploads go through a named pool
+      # with a finite `receive_timeout`.
       {:finch, "~> 0.18"},
       # Test-only: Tesla.Mock for stubbing google_api_drive HTTP calls.
       {:mox, "~> 1.1", only: :test}

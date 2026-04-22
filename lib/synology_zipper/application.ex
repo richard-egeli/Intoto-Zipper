@@ -20,6 +20,11 @@ defmodule SynologyZipper.Application do
          skip: false},
         {DNSCluster, query: Application.get_env(:synology_zipper, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: SynologyZipper.PubSub},
+        # HTTP client used by every google_api_drive / Goth call. Config
+        # wires Tesla to this pool (see `config/config.exs`). Must start
+        # before the Uploader so the first token fetch has a pool to
+        # hand to Mint.
+        {Finch, name: SynologyZipper.Finch},
         # Supervises async upload Tasks spawned by the Runner. Using a
         # Task.Supervisor + `async_nolink` is what keeps a crashing
         # upload (e.g. a timed-out GenServer.call) from tearing down the

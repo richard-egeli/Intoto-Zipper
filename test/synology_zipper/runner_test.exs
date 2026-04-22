@@ -114,10 +114,14 @@ defmodule SynologyZipper.RunnerTest do
 
     month = State.get_month("cams", "2026-03")
     assert month.drive_file_id == ""
+    # `reason_string({:disabled, "no creds"})` unwraps the binary.
     assert month.upload_error == "no creds"
     assert month.upload_attempts == 1
 
-    # The stub's upload/2 must not have been called — short-circuited.
+    # The stub's `upload/2` short-circuits on `disabled: true` without
+    # recording the call — mirrors the real Uploader, whose
+    # `build_conn_from_db/0` returns `{:error, {:disabled, _}}` without
+    # touching Drive.
     assert StubUploader.calls(elem(stub, 1)) == []
   end
 

@@ -105,6 +105,52 @@ defmodule SynologyZipper.UploaderTest do
     end
   end
 
+  describe "concurrent-call timeout behaviour" do
+    # Regression: `disabled?` and `disabled_reason` previously used the
+    # default 5_000ms `GenServer.call` timeout. Because every public call
+    # on this module is serialised through the same mailbox, a preflight
+    # probe fired from task N+1 while task N's `upload` was still
+    # in-flight would queue behind it and exit at 5s. The runner's
+    # `catch kind, reason` then recorded the timeout as a failed upload
+    # on an otherwise healthy month. `:infinity` lets the probes queue
+    # for as long as the in-flight upload needs — the transport-side
+    # HTTP timeout remains the real bound.
+    test "disabled? and disabled_reason don't exit when the GenServer is busy" do
+      server = start_uploader!([])
+      server_pid = Process.whereis(server)
+
+      :sys.suspend(server_pid)
+      on_exit(fn -> if Process.alive?(server_pid), do: :sys.resume(server_pid) end)
+
+      parent = self()
+
+      safe = fn fun ->
+        try do
+          {:ok, fun.()}
+        catch
+          kind, reason -> {kind, reason}
+        end
+      end
+
+      spawn(fn -> send(parent, {:disabled, safe.(fn -> Uploader.disabled?(server) end)}) end)
+      spawn(fn -> send(parent, {:reason, safe.(fn -> Uploader.disabled_reason(server) end)}) end)
+
+      # Pre-fix: both probes exit at the default 5_000ms GenServer.call
+      # timeout and land in our mailbox as `{_, {:exit, {:timeout, ...}}}`.
+      # Post-fix: nothing is delivered; the calls stay queued.
+      Process.sleep(5_100)
+      refute_received {:disabled, _}
+      refute_received {:reason, _}
+
+      :sys.resume(server_pid)
+
+      assert_receive {:disabled, {:ok, true}}, 2_000
+      assert_receive {:reason, {:ok, reason}}, 2_000
+      assert is_binary(reason)
+      assert reason =~ "credentials"
+    end
+  end
+
   describe "reads fresh credentials on every upload in dynamic mode" do
     # Uploading-with-real-Goth-tokens requires hitting Google, so we
     # just prove that a stored credential flips disabled? from true to

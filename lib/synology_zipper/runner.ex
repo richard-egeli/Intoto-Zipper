@@ -36,12 +36,14 @@ defmodule SynologyZipper.Runner do
           upload_tasks: [Task.t()]
         }
 
-  # Per-task upload timeout. Long because uploads are serialised
-  # through the Uploader GenServer — N queued tasks share the same
-  # Drive API pipe. 4h is way more than any realistic real-world zip
-  # should take, and we'd rather await-then-log than force-kill a
-  # legitimate in-flight upload.
-  @upload_await_timeout_ms :timer.hours(4)
+  # Upper bound on how long we wait for any single queued upload task
+  # to finish before shutting it down. Long because uploads are
+  # serialised through the Uploader GenServer: N queued tasks share one
+  # Drive API pipe, so the last task in line can realistically be
+  # waiting for several earlier multi-hour uploads to drain. 12h covers
+  # a full overnight of 100GB+ uploads on residential uplinks; beyond
+  # that something is genuinely wedged and brutal-kill is correct.
+  @upload_await_timeout_ms :timer.hours(12)
 
   @doc """
   Entrypoint used by the scheduler and by integration tests.
@@ -228,17 +230,16 @@ defmodule SynologyZipper.Runner do
 
   defp maybe_queue_upload(acc, _source, _month, _zip_path, _opts), do: acc
 
-  # Body of an async upload task. Mirrors the synchronous upload_one
-  # path and also handles the "uploader disabled" case so we mark the
-  # month's upload_error immediately instead of silently skipping.
+  # Body of an async upload task. Delegates to `upload_one/2`, which
+  # already handles the disabled case atomically — `Uploader.upload/2`
+  # returns `{:error, {:disabled, _}}` via `build_conn_from_db/0` when
+  # no credentials are configured, and `upload_one/2` records that on
+  # the month row. The rescue/catch below turn Elixir exceptions and
+  # linked-process exits into structured `upload_error` writes so a
+  # single bad task doesn't silently swallow the failure.
   defp run_async_upload(candidate, uploader) do
-    if uploader_disabled?(uploader) do
-      _ = State.mark_upload_failed(candidate.source_name, candidate.month, disabled_reason(uploader))
-      :disabled
-    else
-      upload_one(candidate, uploader)
-      :ok
-    end
+    upload_one(candidate, uploader)
+    :ok
   rescue
     e ->
       Logger.error("async upload task crashed",
@@ -283,16 +284,30 @@ defmodule SynologyZipper.Runner do
   defp await_uploads(tasks) do
     Logger.info("awaiting in-flight uploads", count: length(tasks))
 
-    Enum.each(tasks, fn task ->
-      try do
-        Task.await(task, @upload_await_timeout_ms)
-      catch
-        :exit, reason ->
-          Logger.error("async upload task exited abnormally", reason: inspect(reason))
-          # Task.await(4h) timeout or task crash → make sure the task
-          # is stopped so it doesn't linger after the run ends.
-          _ = Task.shutdown(task, :brutal_kill)
-      end
+    # `yield_many` waits once for up to @upload_await_timeout_ms and
+    # returns `{task, result | nil}` for every task. `nil` means it
+    # neither finished nor died in the window — we brutal-kill it.
+    # Before: sequential `Task.await` with per-task 4h timeout meant
+    # worst case N × 4h for a queue of N tasks. Now it's a single
+    # 12h ceiling for the whole queue.
+    Task.yield_many(tasks, @upload_await_timeout_ms)
+    |> Enum.each(fn
+      {_task, {:ok, _}} ->
+        :ok
+
+      {_task, {:exit, reason}} ->
+        # Task crashed; `run_async_upload` already recorded the error on
+        # the month row via its catch clause — `{:exit, _}` here only
+        # means the Task wrapper exited abnormally (e.g. `:killed` by
+        # the VM, not an `exit/1` from the body).
+        Logger.error("async upload task exited abnormally", reason: inspect(reason))
+
+      {task, nil} ->
+        Logger.error("async upload task timed out, killing",
+          timeout_ms: @upload_await_timeout_ms
+        )
+
+        _ = Task.shutdown(task, :brutal_kill)
     end)
 
     Logger.info("in-flight uploads drained")
@@ -466,6 +481,13 @@ defmodule SynologyZipper.Runner do
     )
   end
 
+  # The Uploader returns `{:disabled, reason}` / `{:auth, reason}` for
+  # credential issues — unwrap these so the UI shows the human-readable
+  # reason ("No Google Drive credentials have been uploaded yet.")
+  # rather than an inspect'd tuple.
+  defp reason_string({:disabled, reason}) when is_binary(reason), do: reason
+  defp reason_string({:disabled, reason}), do: "drive uploader disabled: #{inspect(reason)}"
+  defp reason_string({:auth, reason}), do: "drive auth failed: #{inspect(reason)}"
   defp reason_string(r) when is_binary(r), do: r
   defp reason_string(r), do: inspect(r)
 

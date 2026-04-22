@@ -71,6 +71,20 @@ config :phoenix, :json_library, Jason
 # google_api_drive SDK — we don't define our own Tesla clients.
 config :tesla, disable_deprecated_builder_warning: true
 
+# Use Finch as the Tesla adapter so every google_api_drive / Goth call
+# goes through the named pool started in `SynologyZipper.Application`.
+# Tesla's built-in default is `:httpc`, whose receive-side timeout for a
+# multi-hour streamed upload is effectively infinite — a stalled TCP
+# socket would hang the Uploader's call forever. Finch exposes
+# `receive_timeout`, which is the max time we wait for the server to
+# send the next chunk after we've sent the request body. 30 minutes is
+# far larger than any real Drive-side ACK latency but small enough to
+# trip on a truly dead socket. Uploads themselves may take hours; that
+# time is governed by send throughput, not receive_timeout.
+# `config/test.exs` overrides this with `Tesla.Mock`.
+config :tesla, :adapter,
+  {Tesla.Adapter.Finch, name: SynologyZipper.Finch, receive_timeout: :timer.minutes(30)}
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

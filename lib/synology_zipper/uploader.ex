@@ -32,12 +32,12 @@ defmodule SynologyZipper.Uploader do
   alias SynologyZipper.Uploader.{Drive, Job}
 
   @name __MODULE__
-  # `:infinity` because the real bound is the HTTP timeout inside Tesla
-  # / `google_api_drive`, not the BEAM call timeout. Large month zips
-  # (100+ GB on the configured Drive quota) comfortably exceed any
-  # client-side GenServer.call timeout on a residential uplink, and a
-  # caller-side timeout just strands the still-running upload while
-  # killing the async Task. Let the transport decide when to give up.
+  # `:infinity` because every public call serialises through this one
+  # mailbox and the real transport bound lives in the Tesla/Finch
+  # adapter (see `config/config.exs` — `receive_timeout: 30 min`).
+  # Large month zips on a residential uplink take hours; a caller-side
+  # timeout here would just strand the still-running upload while
+  # killing the async Task.
   @default_timeout :infinity
   @scopes ["https://www.googleapis.com/auth/drive.file"]
 
@@ -64,7 +64,11 @@ defmodule SynologyZipper.Uploader do
   @doc "True when no Drive credentials are currently configured."
   @spec disabled?(GenServer.server()) :: boolean()
   def disabled?(server \\ @name) do
-    GenServer.call(server, :disabled?)
+    # `:infinity` for the same reason `upload/3` uses it: every public
+    # call serialises through this one mailbox, so a probe fired from a
+    # queued upload task would otherwise exit at the default 5s while
+    # an earlier upload is still in-flight.
+    GenServer.call(server, :disabled?, @default_timeout)
   end
 
   @doc """
@@ -73,7 +77,7 @@ defmodule SynologyZipper.Uploader do
   """
   @spec disabled_reason(GenServer.server()) :: String.t() | nil
   def disabled_reason(server \\ @name) do
-    GenServer.call(server, :disabled_reason)
+    GenServer.call(server, :disabled_reason, @default_timeout)
   end
 
   # ---------------------------------------------------------------------------

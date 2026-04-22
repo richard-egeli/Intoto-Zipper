@@ -27,9 +27,19 @@ defmodule SynologyZipper.StubUploader do
   def upload(name \\ __MODULE__, %Job{} = job) do
     response =
       Agent.get_and_update(name, fn state ->
-        key = {job.source_name, job.month}
-        response = Map.get(state.plan, key, state.default)
-        {response, %{state | calls: [key | state.calls]}}
+        cond do
+          # Mirror the real Uploader's atomic "disabled" return —
+          # `build_conn_from_db/0` returns `{:error, {:disabled, _}}`
+          # without touching the plan/calls log, so nothing about being
+          # disabled should look like a user-requested upload attempt.
+          state.disabled ->
+            {{:error, {:disabled, state.disabled_reason}}, state}
+
+          true ->
+            key = {job.source_name, job.month}
+            response = Map.get(state.plan, key, state.default)
+            {response, %{state | calls: [key | state.calls]}}
+        end
       end)
 
     case response do
