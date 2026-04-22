@@ -78,6 +78,15 @@ defmodule SynologyZipper.Runner do
       attempted: MapSet.new()
     }
 
+    # Kick off async uploads for any zipped-but-not-yet-uploaded rows
+    # from prior ticks BEFORE the zip phase, so they run in parallel
+    # with the current tick's zipping instead of waiting for the whole
+    # zip phase to drain first. The zip phase is CPU/disk-bound and the
+    # upload phase is network-bound — there's no reason one should
+    # block the other. Populates `upload_tasks` and `attempted` the same
+    # way `maybe_queue_upload/5` does during the zip phase.
+    initial = queue_pending_uploads(initial, uploader)
+
     # Zip phase. Each successful non-empty zip fires an async upload
     # task that piles into `acc.upload_tasks`.
     result =
@@ -86,15 +95,18 @@ defmodule SynologyZipper.Runner do
         process_source(source, Keyword.merge(opts, uploader: uploader), now, acc)
       end)
 
-    # Wait for the uploads we started during the zip phase. They
-    # were collected in reverse-zipped order; reverse for log order.
+    # Wait for the uploads we started (both upfront and during the zip
+    # phase). They were collected in reverse-fired order; reverse for
+    # log order.
     await_uploads(Enum.reverse(result.upload_tasks))
     result = %{result | upload_tasks: []}
 
-    # Safety net: picks up any zipped-but-not-yet-uploaded months
-    # from a *prior* tick that was interrupted. Skips months already
-    # attempted by the async phase in this tick. In steady state this
-    # finds zero candidates.
+    # Final safety net — defensive. `attempted` already covers both
+    # prior-tick pending rows (queued upfront) and this tick's freshly
+    # zipped rows (queued during zip phase), so in steady state this
+    # finds zero candidates. Kept for robustness against races where a
+    # row becomes pending after the upfront dispatch (e.g. somebody
+    # resetting a month mid-run).
     result = run_upload_phase(result, uploader)
 
     exit_status =
@@ -231,6 +243,40 @@ defmodule SynologyZipper.Runner do
   end
 
   defp maybe_queue_upload(acc, _source, _month, _zip_path, _opts), do: acc
+
+  # Fires async upload tasks for every row returned by
+  # `State.months_pending_upload/0` (auto_upload=true AND status=zipped
+  # AND drive_file_id='' AND upload_attempts < cap) — i.e. carryover
+  # from prior ticks. Called at the *top* of `run/1` so these uploads
+  # are in flight the moment the run starts, rather than waiting for
+  # this tick's zip phase to finish. Shares the Uploader's internal
+  # FIFO queue with any tasks the zip phase will spawn later, so
+  # single-worker serialization is preserved.
+  defp queue_pending_uploads(acc, uploader) do
+    candidates = State.months_pending_upload()
+
+    case candidates do
+      [] ->
+        acc
+
+      _ ->
+        Logger.info("dispatching pending uploads upfront", count: length(candidates))
+
+        Enum.reduce(candidates, acc, fn cand, acc ->
+          task =
+            Task.Supervisor.async_nolink(
+              SynologyZipper.UploadTaskSupervisor,
+              fn -> run_async_upload(cand, uploader) end
+            )
+
+          %{
+            acc
+            | upload_tasks: [task | acc.upload_tasks],
+              attempted: MapSet.put(acc.attempted, {cand.source_name, cand.month})
+          }
+        end)
+    end
+  end
 
   # Body of an async upload task. Delegates to `upload_one/2`, which
   # already handles the disabled case atomically — `Uploader.upload/2`
