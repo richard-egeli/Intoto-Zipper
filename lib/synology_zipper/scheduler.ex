@@ -15,7 +15,13 @@ defmodule SynologyZipper.Scheduler do
 
       config :synology_zipper, SynologyZipper.Scheduler,
         tick_interval_ms: 60 * 60 * 1000,
-        initial_delay_ms: 0
+        initial_delay_ms: 1_000
+
+  `initial_delay_ms` must be a positive integer. Passing `0` (or anything
+  the `> 0` guard in `schedule_next_tick/1` rejects) skips the initial
+  tick — since recurring ticks are only re-armed from inside
+  `handle_info(:tick, ...)`, that leaves the scheduler in a manual-only
+  state. Tests use that on purpose; prod must not.
   """
 
   use GenServer

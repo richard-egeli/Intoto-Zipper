@@ -18,9 +18,13 @@ config :synology_zipper, :background_workers, true
 
 # Scheduler default — 1 hour tick in prod; dev / prod overrides live in
 # their respective config files or in config/runtime.exs.
+# initial_delay_ms must be > 0 — Scheduler.schedule_next_tick/1 treats 0
+# as "skip scheduling", which prevents the recurring tick chain from ever
+# starting (the first :tick is what arms the next one). Tests that want
+# "manual runs only" pass initial_delay_ms: 0 explicitly in opts.
 config :synology_zipper, SynologyZipper.Scheduler,
   tick_interval_ms: 60 * 60 * 1000,
-  initial_delay_ms: 0
+  initial_delay_ms: 1_000
 
 # Configures the endpoint
 config :synology_zipper, SynologyZipperWeb.Endpoint,
