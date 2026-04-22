@@ -137,6 +137,42 @@ defmodule SynologyZipper.Runner do
     result
   end
 
+  @doc """
+  Walk every zipped-but-unuploaded row (`status='zipped' AND
+  drive_file_id='' AND upload_attempts < cap`) and dispatch an async
+  upload for each — no zip phase, no run row. The upload path in
+  `Drive.upload/2` lists the target folder first and adopts an
+  existing file with a matching md5 rather than re-uploading, so this
+  doubles as "reconcile my DB with whatever's actually in Drive
+  already" — e.g. rows that were uploaded by an earlier version of
+  the app but whose `drive_file_id` never landed on disk.
+
+  Returns `{:ok, count}` where `count` is the number of rows processed.
+  Blocks until every dispatched task resolves (same `@upload_await_timeout_ms`
+  ceiling as a normal run) so the caller — typically a LiveView event
+  running in a background Task — can flash a final result.
+  """
+  @spec reconcile(keyword()) :: {:ok, non_neg_integer()}
+  def reconcile(opts \\ []) do
+    uploader = Keyword.get(opts, :uploader, Uploader)
+    candidates = State.months_pending_upload()
+
+    Logger.info("reconcile: dispatching pending uploads", count: length(candidates))
+
+    tasks =
+      Enum.map(candidates, fn cand ->
+        Task.Supervisor.async_nolink(
+          SynologyZipper.UploadTaskSupervisor,
+          fn -> run_async_upload(cand, uploader) end
+        )
+      end)
+
+    await_uploads(tasks)
+    Logger.info("reconcile: done", count: length(candidates))
+
+    {:ok, length(candidates)}
+  end
+
   # ---------------------------------------------------------------------------
   # Per-source plan + zip
   # ---------------------------------------------------------------------------

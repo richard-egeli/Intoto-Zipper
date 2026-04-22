@@ -13,7 +13,7 @@ defmodule SynologyZipperWeb.OverviewLive do
 
   on_mount {SynologyZipperWeb.Live.Hooks, :overview}
 
-  alias SynologyZipper.State
+  alias SynologyZipper.{Runner, State}
   alias SynologyZipperWeb.Live.Helpers
 
   @impl true
@@ -34,6 +34,28 @@ defmodule SynologyZipperWeb.OverviewLive do
      |> assign(:active_zip, nil)
      |> assign(:active_upload, reconstruct_active_upload())
      |> refresh()}
+  end
+
+  @impl true
+  def handle_event("reconcile_now", _params, socket) do
+    # Run the reconcile on a detached Task so the LiveView stays
+    # responsive — it can block for minutes on the md5 pass of each
+    # pending zip. Progress surfaces via the normal `:upload_progress`
+    # / `:upload_started` / `:upload_finished` PubSub feed that this
+    # LiveView is already subscribed to, so the activity tile just
+    # lights up as the reconcile proceeds.
+    _ =
+      Task.Supervisor.start_child(
+        SynologyZipper.UploadTaskSupervisor,
+        fn -> Runner.reconcile() end
+      )
+
+    {:noreply,
+     put_flash(
+       socket,
+       :info,
+       "Syncing with Drive — pending months will adopt existing files or re-upload. Watch the Live activity panel."
+     )}
   end
 
   @impl true
@@ -173,12 +195,31 @@ defmodule SynologyZipperWeb.OverviewLive do
     ~H"""
     <div class="mb-5 flex items-center justify-between">
       <h2 class="text-[22px] font-semibold tracking-tight text-gray-800">Overview</h2>
-      <.link
-        navigate={~p"/sources/new"}
-        class="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-[13px] font-medium text-white shadow-sm hover:bg-blue-700"
-      >
-        + Add source
-      </.link>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          phx-click="reconcile_now"
+          title="Check Drive for existing uploads of zipped-but-pending months and adopt them without re-uploading"
+          class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+        >
+          Sync with Drive
+        </button>
+        <.link
+          navigate={~p"/sources/new"}
+          class="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-[13px] font-medium text-white shadow-sm hover:bg-blue-700"
+        >
+          + Add source
+        </.link>
+      </div>
+    </div>
+
+    <div
+      :if={msg = Phoenix.Flash.get(@flash, :info)}
+      id="ov-flash-info"
+      phx-click={JS.hide(to: "#ov-flash-info")}
+      class="mb-4 cursor-pointer rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13.5px] text-emerald-800"
+    >
+      {msg}
     </div>
 
     <.activity_panel zip={@active_zip} upload={@active_upload} running={@running} />
