@@ -117,11 +117,15 @@ defmodule SynologyZipperWeb.OverviewLive do
   def handle_info({:run_end, _id, _status}, socket) do
     # Belt-and-suspenders: a clean run_end should have fired the
     # individual *_finished events, but if a run crashed mid-flight we
-    # might be left with stale tiles. Clear them on run_end too.
+    # might be left with stale tiles. Clear them on run_end too. Also
+    # refresh the sources list so any "running" badge flips to its
+    # final status immediately — the hook sets `:running` to false on
+    # this same event, so `display_last_status` now wants fresh data.
     {:noreply,
      socket
      |> assign(:active_zip, nil)
-     |> assign(:active_upload, nil)}
+     |> assign(:active_upload, nil)
+     |> refresh()}
   end
 
   # {:run_start, _} is handled by the shared hook.
@@ -232,10 +236,11 @@ defmodule SynologyZipperWeb.OverviewLive do
                 <% end %>
               </td>
               <td class="whitespace-nowrap border-b border-gray-100 px-4 py-2.5">
-                <%= if src.last_run_status == "" do %>
-                  <span class="text-gray-400">—</span>
-                <% else %>
-                  <.status_badge status={src.last_run_status} />
+                <%= case display_last_status(src, @running) do %>
+                  <% "" -> %>
+                    <span class="text-gray-400">—</span>
+                  <% status -> %>
+                    <.status_badge status={status} />
                 <% end %>
               </td>
             </tr>
@@ -294,6 +299,15 @@ defmodule SynologyZipperWeb.OverviewLive do
     </div>
     """
   end
+
+  # A `status="failed"` row with no `finished_at` while the scheduler
+  # is running is really the in-progress zip attempt — same idea as
+  # `SourceLive.display_status/2`. Surface it as "running" so the
+  # overview doesn't flash red during every tick.
+  defp display_last_status(%{last_run_status: "failed", last_run_finished_at: nil}, true),
+    do: "running"
+
+  defp display_last_status(%{last_run_status: s}, _), do: s
 
   # ---- Inline function components ---------------------------------------------
 
@@ -437,7 +451,7 @@ defmodule SynologyZipperWeb.OverviewLive do
       case status do
         s when s in ["zipped", "ok"] -> {"bg-emerald-50", "text-emerald-700", "border-emerald-200"}
         s when s in ["failed", "error"] -> {"bg-red-50", "text-red-700", "border-red-200"}
-        "partial" -> {"bg-amber-50", "text-amber-700", "border-amber-200"}
+        s when s in ["partial", "running"] -> {"bg-amber-50", "text-amber-700", "border-amber-200"}
         _ -> {"bg-gray-50", "text-gray-500", "border-gray-200"}
       end
 

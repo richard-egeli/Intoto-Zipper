@@ -505,9 +505,12 @@ defmodule SynologyZipper.State do
     Enum.map(sources, fn s ->
       base = Map.from_struct(s) |> Map.drop([:__meta__, :months])
 
+      last = last_run_row(s.name)
+
       Map.merge(base, %{
         last_zipped_month: last_zipped_month(s.name),
-        last_run_status: last_run_status(s.name),
+        last_run_status: Map.get(last, :status, ""),
+        last_run_finished_at: Map.get(last, :finished_at),
         zipped_months: count_months(s.name, status: "zipped"),
         uploaded_months: count_months(s.name, uploaded: true),
         stuck_uploads: count_stuck_uploads(s.name)
@@ -526,17 +529,22 @@ defmodule SynologyZipper.State do
     end
   end
 
-  defp last_run_status(source_name) do
-    case Repo.one(
-           from m in Month,
-             where: m.source_name == ^source_name,
-             order_by: [desc_nulls_last: m.last_attempt_at],
-             limit: 1,
-             select: m.status
-         ) do
-      nil -> ""
-      v -> v
-    end
+  # Returns `%{status, finished_at}` for the newest month attempt on
+  # the source, or `%{}` when there are none. `start_month_attempt/3`
+  # writes `status="failed"` + `finished_at=nil` the moment a month
+  # starts processing (crash-safety invariant — a runner that dies
+  # mid-zip must leave the row as failed so it's retried), so the
+  # caller needs `finished_at` to tell "still running" from "really
+  # failed": nil + scheduler running → running; non-nil + "failed" →
+  # genuinely failed.
+  defp last_run_row(source_name) do
+    Repo.one(
+      from m in Month,
+        where: m.source_name == ^source_name,
+        order_by: [desc_nulls_last: m.last_attempt_at],
+        limit: 1,
+        select: %{status: m.status, finished_at: m.finished_at}
+    ) || %{}
   end
 
   defp count_months(source_name, status: status) do
